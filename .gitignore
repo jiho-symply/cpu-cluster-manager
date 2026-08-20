@@ -1,0 +1,6 @@
+.env
+config/nodes.yaml
+secrets/
+__pycache__/
+*.py[cod]
+.venv/

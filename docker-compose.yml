@@ -1,0 +1,25 @@
+services:
+  cluster-manager:
+    build:
+      context: ./manager
+    container_name: cpu-cluster-manager
+    restart: unless-stopped
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set ADMIN_USERNAME in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      NODES_CONFIG: /app/config/nodes.yaml
+      SSH_KEY: /run/ssh/id_ed25519
+      SSH_KNOWN_HOSTS: /run/ssh/known_hosts
+    ports:
+      - "${UI_BIND:-127.0.0.1}:${UI_PORT:-8080}:8080"
+    volumes:
+      - ./config/nodes.yaml:/app/config/nodes.yaml:ro
+      - ${SSH_KEY_PATH:?set SSH_KEY_PATH in .env}:/run/ssh/id_ed25519:ro
+      - ${SSH_KNOWN_HOSTS_PATH:?set SSH_KNOWN_HOSTS_PATH in .env}:/run/ssh/known_hosts:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

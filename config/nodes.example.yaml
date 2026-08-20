@@ -1,0 +1,9 @@
+cluster: cluster1
+ssh_user: cluster-ui
+nodes:
+  - name: cpu-01
+    host: 10.0.0.11
+    port: 22
+  - name: cpu-02
+    host: 10.0.0.12
+    port: 22
