@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACTION="${SSH_ORIGINAL_COMMAND:-}"
+
+case "$ACTION" in
+  summary|start|stop|restart|recreate|reset-password|logs)
+    exec sudo -n /usr/local/sbin/cluster-node-admin "$ACTION"
+    ;;
+  "")
+    echo "This SSH key is restricted to CPU Cluster Manager actions." >&2
+    exit 2
+    ;;
+  *)
+    echo "unsupported manager action: $ACTION" >&2
+    exit 2
+    ;;
+esac

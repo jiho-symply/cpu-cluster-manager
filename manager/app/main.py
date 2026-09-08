@@ -45,7 +45,7 @@ def load_nodes() -> tuple[str, list[Node]]:
         raise RuntimeError(f"nodes config not found: {NODES_CONFIG}") from exc
 
     cluster = str(raw.get("cluster", "cluster1"))
-    default_user = str(raw.get("ssh_user", "cluster-ui"))
+    default_user = str(raw.get("ssh_user", "ysadmin"))
     nodes = [
         Node(
             name=str(item["name"]),
@@ -70,7 +70,7 @@ def collect_summary(node: Node) -> dict[str, str | bool | int]:
     try:
         data = NodeSSH(node).summary()
         return {"name": node.name, "host": node.host, "port": node.port, "reachable": True, **data}
-    except Exception as exc:  # dashboard should show one failed node without failing the whole page
+    except Exception as exc:
         return {
             "name": node.name,
             "host": node.host,

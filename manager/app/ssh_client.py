@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 SSH_KEY = os.environ.get("SSH_KEY", "/run/ssh/id_ed25519")
 SSH_KNOWN_HOSTS = os.environ.get("SSH_KNOWN_HOSTS", "/run/ssh/known_hosts")
-REMOTE_ADMIN = "/usr/local/sbin/cluster-node-admin"
 
 
 @dataclass(frozen=True)
@@ -14,7 +13,7 @@ class Node:
     name: str
     host: str
     port: int = 22
-    user: str = "cluster-ui"
+    user: str = "ysadmin"
 
 
 class NodeSSH:
@@ -24,6 +23,7 @@ class NodeSSH:
     def _run(self, action: str, timeout: int = 12) -> str:
         cmd = [
             "ssh",
+            "-T",
             "-i",
             SSH_KEY,
             "-p",
@@ -31,14 +31,14 @@ class NodeSSH:
             "-o",
             "BatchMode=yes",
             "-o",
+            "IdentitiesOnly=yes",
+            "-o",
             "ConnectTimeout=4",
             "-o",
             "StrictHostKeyChecking=yes",
             "-o",
             f"UserKnownHostsFile={SSH_KNOWN_HOSTS}",
             f"{self.node.user}@{self.node.host}",
-            "sudo",
-            REMOTE_ADMIN,
             action,
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)

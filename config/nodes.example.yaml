@@ -1,5 +1,5 @@
 cluster: cluster1
-ssh_user: cluster-ui
+ssh_user: ysadmin
 nodes:
   - name: cpu-01
     host: 10.0.0.11
