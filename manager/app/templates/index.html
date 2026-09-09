@@ -68,7 +68,7 @@ const logsContent=document.getElementById('logs-content');
 const grafanaBase={{ grafana_base_url | tojson }};
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function actionButton(node,action,label,danger=false){return `<button type="button" data-node="${esc(node)}" data-action="${action}" class="${danger?'danger':''}">${label}</button>`;}
-function monitorLinks(node){const n=encodeURIComponent(node);return `<div class="actions"><a class="button" target="_blank" rel="noopener" href="${esc(grafanaBase)}/d/cluster-recent/cluster-recent?orgId=1&var-node=${n}">Recent</a><a class="button" target="_blank" rel="noopener" href="${esc(grafanaBase)}/d/cluster-archive/cluster-long-term?orgId=1&var-node=${n}&from=now-1y&to=now">3y History</a></div>`;}
+function monitorLinks(node){const n=encodeURIComponent(node);return `<div class="actions"><a class="button" target="_blank" rel="noopener" href="${esc(grafanaBase)}/d/cluster-recent/cluster-recent?orgId=1&var-node=${n}">Recent</a><a class="button" target="_blank" rel="noopener" href="${esc(grafanaBase)}/d/cluster-archive/cluster-long-term?orgId=1&var-node=${n}&from=now-1y&to=now">5y History</a></div>`;}
 async function loadNodes(){
   const res=await fetch('/api/nodes',{headers:{Accept:'application/json'}}); if(!res.ok) throw new Error(`HTTP ${res.status}`);
   const data=await res.json();
