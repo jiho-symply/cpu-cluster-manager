@@ -1,0 +1,10 @@
+cluster: cluster2
+platform: centos7
+ssh_user: ysadmin
+nodes:
+  - name: cpu-07
+    host: 10.0.1.17
+    port: 22
+  - name: cpu-08
+    host: 10.0.1.18
+    port: 22
