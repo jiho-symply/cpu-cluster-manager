@@ -2,8 +2,6 @@
 set -euo pipefail
 
 ADMIN_USER="ysadmin"
-NODE_EXPORTER_IMAGE="quay.io/prometheus/node-exporter:v1.12.1"
-CADVISOR_IMAGE="ghcr.io/google/cadvisor:v0.60.5"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "run with sudo: sudo $0 <cluster-manager-public-key-file>" >&2
@@ -16,19 +14,15 @@ if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
   exit 2
 fi
 
-if ! id "$ADMIN_USER" >/dev/null 2>&1; then
-  echo "required admin account does not exist: $ADMIN_USER" >&2
-  exit 3
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$SCRIPT_DIR/../scripts/preflight.sh" compute
+
 ADMIN_HOME="$(getent passwd "$ADMIN_USER" | awk -F: '{print $6}')"
 ADMIN_GROUP="$(id -gn "$ADMIN_USER")"
-
-if [ -z "$ADMIN_HOME" ] || [ ! -d "$ADMIN_HOME" ]; then
+[ -n "$ADMIN_HOME" ] && [ -d "$ADMIN_HOME" ] || {
   echo "cannot determine home directory for $ADMIN_USER" >&2
   exit 3
-fi
+}
 
 read -r KEY_TYPE KEY_DATA _ < "$PUBKEY_FILE" || true
 if [ -z "${KEY_TYPE:-}" ] || [ -z "${KEY_DATA:-}" ]; then
@@ -73,36 +67,8 @@ chmod 0440 /etc/sudoers.d/cpu-cluster-manager
 visudo -cf /etc/sudoers.d/cpu-cluster-manager >/dev/null
 rm -f /etc/sudoers.d/cluster-ui
 
-# Read-only monitoring exporters. Restrict ports 9100/8081 so only the Cluster 1 master can reach them.
-docker rm -f cluster-node-exporter cluster-cadvisor >/dev/null 2>&1 || true
+"$SCRIPT_DIR/install-monitoring.sh"
 
-docker run -d \
-  --name cluster-node-exporter \
-  --restart unless-stopped \
-  --network host \
-  --pid host \
-  -v /:/host:ro,rslave \
-  "$NODE_EXPORTER_IMAGE" \
-  --path.rootfs=/host >/dev/null
-
-docker run -d \
-  --name cluster-cadvisor \
-  --restart unless-stopped \
-  --publish 8081:8080 \
-  --volume=/:/rootfs:ro \
-  --volume=/var/run:/var/run:ro \
-  --volume=/sys:/sys:ro \
-  --volume=/var/lib/docker/:/var/lib/docker:ro \
-  --volume=/dev/disk/:/dev/disk:ro \
-  --privileged \
-  --device=/dev/kmsg \
-  "$CADVISOR_IMAGE" \
-  --docker_only=true \
-  --store_container_labels=false \
-  --housekeeping_interval=10s >/dev/null
-
-echo "[OK] node management installed"
-echo "[OK] SSH user: $ADMIN_USER"
-echo "[OK] node_exporter: :9100"
-echo "[OK] cAdvisor: :8081"
-echo "[IMPORTANT] allow :9100 and :8081 only from the Cluster 1 master"
+echo "[OK] compute-node installation complete"
+echo "[OK] SSH control user: $ADMIN_USER"
+echo "[OK] monitoring: native node_exporter + rent-node textfile metrics on TCP/9100"
