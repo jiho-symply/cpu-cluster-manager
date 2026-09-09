@@ -1,0 +1,24 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus Hot
+    uid: prometheus-hot
+    type: prometheus
+    access: proxy
+    url: http://prometheus-hot:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 30s
+
+  - name: Prometheus Archive
+    uid: prometheus-archive
+    type: prometheus
+    access: proxy
+    url: http://prometheus-archive:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 1h
