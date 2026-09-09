@@ -33,6 +33,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.wal-segment-size=16MB
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
@@ -50,6 +51,7 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=5y
       - --storage.tsdb.retention.size=${ARCHIVE_RETENTION_SIZE:?run scripts/install-master.sh to set ARCHIVE_RETENTION_SIZE}
+      - --storage.tsdb.wal-segment-size=8MB
     volumes:
       - ./monitoring/prometheus-archive/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_archive_data:/prometheus
