@@ -17,6 +17,7 @@ APP_DIR = Path(__file__).resolve().parent
 NODES_CONFIG = Path(os.environ.get("NODES_CONFIG", "/app/config/nodes.yaml"))
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+GRAFANA_BASE_URL = os.environ.get("GRAFANA_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
 
 if not ADMIN_USERNAME or not ADMIN_PASSWORD:
     raise RuntimeError("ADMIN_USERNAME and ADMIN_PASSWORD must be set")
@@ -91,7 +92,11 @@ def index(request: Request, _: str = Depends(require_admin)):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"cluster": cluster, "node_count": len(nodes)},
+        context={
+            "cluster": cluster,
+            "node_count": len(nodes),
+            "grafana_base_url": GRAFANA_BASE_URL,
+        },
     )
 
 
