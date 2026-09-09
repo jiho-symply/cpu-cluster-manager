@@ -26,12 +26,13 @@ services:
       - ALL
 
   prometheus-hot:
-    image: prom/prometheus:v3.13.3
+    image: prom/prometheus:v3.14.0
     container_name: cpu-cluster-prometheus-hot
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
@@ -41,12 +42,13 @@ services:
       - alertmanager
 
   prometheus-archive:
-    image: prom/prometheus:v3.13.3
+    image: prom/prometheus:v3.14.0
     container_name: cpu-cluster-prometheus-archive
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=3y
     volumes:
       - ./monitoring/prometheus-archive/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_archive_data:/prometheus
@@ -54,7 +56,7 @@ services:
       - prometheus-hot
 
   alertmanager:
-    image: prom/alertmanager:v0.33.1
+    image: prom/alertmanager:v0.34.0
     container_name: cpu-cluster-alertmanager
     restart: unless-stopped
     command:
