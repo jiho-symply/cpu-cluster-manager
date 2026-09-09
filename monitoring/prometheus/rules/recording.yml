@@ -1,9 +1,9 @@
 groups:
   - name: cluster-live
-    interval: 1m
+    interval: 30s
     rules:
       - record: cluster_node_cpu_utilization_ratio
-        expr: 1 - avg by (cluster, platform, node) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+        expr: 1 - avg by (cluster, platform, node) (rate(node_cpu_seconds_total{mode="idle"}[2m]))
 
       - record: cluster_node_memory_utilization_ratio
         expr: 1 - (max by (cluster, platform, node) (node_memory_MemAvailable_bytes) / max by (cluster, platform, node) (node_memory_MemTotal_bytes))
@@ -28,24 +28,52 @@ groups:
       - record: cluster_rent_running
         expr: max by (cluster, platform, node) (cluster_rent_container_running)
 
-  - name: cluster-hourly-archive
+  # Long-term contract: one aggregate sample per 5-minute bucket.
+  # For each resource, preserve the bucket envelope as min / avg / max.
+  # query_offset leaves one scrape interval for late samples before finalizing a bucket.
+  - name: cluster-5m-archive
     interval: 5m
+    query_offset: 30s
     rules:
-      - record: archive_node_cpu_utilization_ratio_avg1h
-        expr: avg_over_time(cluster_node_cpu_utilization_ratio[1h])
-      - record: archive_node_cpu_utilization_ratio_max1h
-        expr: max_over_time(cluster_node_cpu_utilization_ratio[1h])
-      - record: archive_node_memory_utilization_ratio_avg1h
-        expr: avg_over_time(cluster_node_memory_utilization_ratio[1h])
-      - record: archive_node_memory_utilization_ratio_max1h
-        expr: max_over_time(cluster_node_memory_utilization_ratio[1h])
-      - record: archive_node_filesystem_utilization_ratio_max1h
-        expr: max_over_time(cluster_node_filesystem_utilization_ratio[1h])
-      - record: archive_rent_cpu_cores_avg1h
-        expr: avg_over_time(cluster_rent_cpu_cores[1h])
-      - record: archive_rent_cpu_cores_max1h
-        expr: max_over_time(cluster_rent_cpu_cores[1h])
-      - record: archive_rent_memory_working_set_bytes_avg1h
-        expr: avg_over_time(cluster_rent_memory_working_set_bytes[1h])
-      - record: archive_rent_memory_working_set_bytes_max1h
-        expr: max_over_time(cluster_rent_memory_working_set_bytes[1h])
+      - record: archive_node_cpu_utilization_ratio_min5m
+        expr: min_over_time(cluster_node_cpu_utilization_ratio[5m])
+      - record: archive_node_cpu_utilization_ratio_avg5m
+        expr: avg_over_time(cluster_node_cpu_utilization_ratio[5m])
+      - record: archive_node_cpu_utilization_ratio_max5m
+        expr: max_over_time(cluster_node_cpu_utilization_ratio[5m])
+
+      - record: archive_node_memory_utilization_ratio_min5m
+        expr: min_over_time(cluster_node_memory_utilization_ratio[5m])
+      - record: archive_node_memory_utilization_ratio_avg5m
+        expr: avg_over_time(cluster_node_memory_utilization_ratio[5m])
+      - record: archive_node_memory_utilization_ratio_max5m
+        expr: max_over_time(cluster_node_memory_utilization_ratio[5m])
+
+      # Archive one node-level disk envelope instead of every mountpoint, bounding long-term cardinality.
+      - record: archive_node_disk_utilization_ratio_min5m
+        expr: min_over_time(cluster_node_disk_utilization_ratio_max[5m])
+      - record: archive_node_disk_utilization_ratio_avg5m
+        expr: avg_over_time(cluster_node_disk_utilization_ratio_max[5m])
+      - record: archive_node_disk_utilization_ratio_max5m
+        expr: max_over_time(cluster_node_disk_utilization_ratio_max[5m])
+
+      - record: archive_rent_cpu_cores_min5m
+        expr: min_over_time(cluster_rent_cpu_cores[5m])
+      - record: archive_rent_cpu_cores_avg5m
+        expr: avg_over_time(cluster_rent_cpu_cores[5m])
+      - record: archive_rent_cpu_cores_max5m
+        expr: max_over_time(cluster_rent_cpu_cores[5m])
+
+      - record: archive_rent_memory_working_set_bytes_min5m
+        expr: min_over_time(cluster_rent_memory_working_set_bytes[5m])
+      - record: archive_rent_memory_working_set_bytes_avg5m
+        expr: avg_over_time(cluster_rent_memory_working_set_bytes[5m])
+      - record: archive_rent_memory_working_set_bytes_max5m
+        expr: max_over_time(cluster_rent_memory_working_set_bytes[5m])
+
+      - record: archive_rent_running_min5m
+        expr: min_over_time(cluster_rent_running[5m])
+      - record: archive_rent_running_avg5m
+        expr: avg_over_time(cluster_rent_running[5m])
+      - record: archive_rent_running_max5m
+        expr: max_over_time(cluster_rent_running[5m])
