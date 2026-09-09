@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 1h
+  scrape_timeout: 30s
+  evaluation_interval: 1h
+
+storage:
+  tsdb:
+    retention:
+      time: 3y
+
+scrape_configs:
+  - job_name: hourly-federation
+    honor_labels: true
+    metrics_path: /federate
+    params:
+      'match[]':
+        - '{__name__=~"archive_.*"}'
+    static_configs:
+      - targets:
+          - prometheus-hot:9090
