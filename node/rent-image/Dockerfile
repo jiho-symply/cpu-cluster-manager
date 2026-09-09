@@ -3,8 +3,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Seoul
 
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://kr.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list && \
-    printf 'Acquire::Retries "10";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Queue-Mode "access";\n' >/etc/apt/apt.conf.d/80-retries && \
+RUN printf 'Acquire::Retries "10";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Queue-Mode "access";\n' >/etc/apt/apt.conf.d/80-retries && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       apt-utils debconf locales tzdata ca-certificates && \
