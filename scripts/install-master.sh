@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ADMIN_USER="ysadmin"
 CONFIG="${1:-config/nodes.yaml}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+if [ "$(id -un)" != "$ADMIN_USER" ]; then
+  echo "[ERROR] run the master installer as $ADMIN_USER without sudo" >&2
+  echo "        sudo would place the dedicated SSH key under the wrong home directory" >&2
+  exit 1
+fi
 
 [ -f "$CONFIG" ] || {
   echo "nodes config not found: $CONFIG" >&2
