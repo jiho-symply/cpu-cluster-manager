@@ -1,0 +1,52 @@
+groups:
+  - name: cluster-live
+    interval: 1m
+    rules:
+      - record: cluster_node_cpu_utilization_ratio
+        expr: 1 - avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+
+      - record: cluster_node_memory_utilization_ratio
+        expr: 1 - (max by (node) (node_memory_MemAvailable_bytes) / max by (node) (node_memory_MemTotal_bytes))
+
+      - record: cluster_node_filesystem_utilization_ratio
+        expr: |
+          1 - (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|tracefs|proc|sysfs|cgroup2?|autofs|mqueue|debugfs|securityfs|pstore|configfs|fusectl|rpc_pipefs"}
+            /
+            node_filesystem_size_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|tracefs|proc|sysfs|cgroup2?|autofs|mqueue|debugfs|securityfs|pstore|configfs|fusectl|rpc_pipefs"}
+          )
+
+      - record: cluster_node_disk_utilization_ratio_max
+        expr: max by (node) (cluster_node_filesystem_utilization_ratio)
+
+      - record: cluster_rent_cpu_cores
+        expr: sum by (node) (rate(container_cpu_usage_seconds_total{name="rent-node"}[5m]))
+
+      - record: cluster_rent_memory_working_set_bytes
+        expr: max by (node) (container_memory_working_set_bytes{name="rent-node"})
+
+  - name: cluster-hourly-archive
+    interval: 5m
+    rules:
+      - record: archive_node_cpu_utilization_ratio_avg1h
+        expr: avg_over_time(cluster_node_cpu_utilization_ratio[1h])
+      - record: archive_node_cpu_utilization_ratio_max1h
+        expr: max_over_time(cluster_node_cpu_utilization_ratio[1h])
+
+      - record: archive_node_memory_utilization_ratio_avg1h
+        expr: avg_over_time(cluster_node_memory_utilization_ratio[1h])
+      - record: archive_node_memory_utilization_ratio_max1h
+        expr: max_over_time(cluster_node_memory_utilization_ratio[1h])
+
+      - record: archive_node_disk_utilization_ratio_max1h
+        expr: max_over_time(cluster_node_disk_utilization_ratio_max[1h])
+
+      - record: archive_rent_cpu_cores_avg1h
+        expr: avg_over_time(cluster_rent_cpu_cores[1h])
+      - record: archive_rent_cpu_cores_max1h
+        expr: max_over_time(cluster_rent_cpu_cores[1h])
+
+      - record: archive_rent_memory_working_set_bytes_avg1h
+        expr: avg_over_time(cluster_rent_memory_working_set_bytes[1h])
+      - record: archive_rent_memory_working_set_bytes_max1h
+        expr: max_over_time(cluster_rent_memory_working_set_bytes[1h])
