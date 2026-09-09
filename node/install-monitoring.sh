@@ -16,20 +16,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
-  x86_64) NE_ARCH="amd64" ;;
-  aarch64) NE_ARCH="arm64" ;;
+  x86_64)
+    NE_ARCH="amd64"
+    NE_SHA256="b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63"
+    ;;
+  aarch64)
+    NE_ARCH="arm64"
+    NE_SHA256="ad35b605f9954b9f1ffddf5ba054bdc5a98d790b9eae5291e1eeb83f1ecbd0e7"
+    ;;
   *) echo "unsupported architecture: $ARCH" >&2; exit 2 ;;
 esac
 
 if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-  useradd --system --no-create-home --shell /sbin/nologin "$SERVICE_USER" 2>/dev/null \
+  useradd -r -M -s /sbin/nologin "$SERVICE_USER" 2>/dev/null \
     || useradd -r -M -s /usr/sbin/nologin "$SERVICE_USER"
 fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 URL="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-${NE_ARCH}.tar.gz"
-curl -fsSL "$URL" -o "$TMP/node_exporter.tgz"
+curl -fL --retry 5 --connect-timeout 10 "$URL" -o "$TMP/node_exporter.tgz"
+printf '%s  %s\n' "$NE_SHA256" "$TMP/node_exporter.tgz" | sha256sum -c -
 tar -xzf "$TMP/node_exporter.tgz" -C "$TMP"
 install -m 0755 "$TMP/node_exporter-${NODE_EXPORTER_VERSION}.linux-${NE_ARCH}/node_exporter" "$INSTALL_DIR/node_exporter"
 
@@ -84,18 +91,17 @@ systemctl enable --now rent-node-metrics.timer
 systemctl start rent-node-metrics.service
 
 for _ in $(seq 1 20); do
-  if curl -fsS http://127.0.0.1:9100/metrics >/dev/null 2>&1; then
-    break
-  fi
+  if curl -fsS http://127.0.0.1:9100/metrics >/dev/null 2>&1; then break; fi
   sleep 1
 done
-curl -fsS http://127.0.0.1:9100/metrics >/dev/null || {
+METRICS="$(curl -fsS http://127.0.0.1:9100/metrics)" || {
   systemctl --no-pager --full status node-exporter.service >&2 || true
   exit 3
 }
-
-if ! curl -fsS http://127.0.0.1:9100/metrics | grep -q '^cluster_rent_container_'; then
-  echo "[WARN] node_exporter is healthy but rent-node custom metrics are not visible yet" >&2
+if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then
+  systemctl --no-pager --full status rent-node-metrics.service >&2 || true
+  echo "[ERROR] node_exporter is healthy but rent-node custom metrics are missing" >&2
+  exit 4
 fi
 
 echo "[OK] native node_exporter installed: v${NODE_EXPORTER_VERSION}"
