@@ -39,137 +39,138 @@ detect_ip() {
     echo "${HOST_IP}"
     return
   fi
-
   local ip=""
   ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
-
   if [ -z "${ip}" ]; then
     ip="$(hostname -I | tr ' ' '\n' | grep -v '^127\.' | grep -v '^172\.17\.' | head -n1)"
   fi
-
-  if [ -z "${ip}" ]; then
-    echo "failed to detect host ip" >&2
-    exit 1
-  fi
-
-  echo "${ip}"
+  [ -n "$ip" ] || { echo "failed to detect host IPv4 address" >&2; exit 1; }
+  echo "$ip"
 }
 
 build_account_name() {
-  if [ -n "${ACCOUNT_NAME:-}" ]; then
-    echo "${ACCOUNT_NAME}"
-    return
-  fi
+  if [ -n "${ACCOUNT_NAME:-}" ]; then echo "$ACCOUNT_NAME"; return; fi
   local ip last
-  ip="$(detect_ip)"
-  last="${ip##*.}"
-  printf 'engcluster%03d\n' "${last}"
+  ip="$(detect_ip)"; last="${ip##*.}"
+  [[ "$last" =~ ^[0-9]+$ ]] && [ "$last" -le 255 ] || { echo "invalid IPv4 last octet: $last" >&2; exit 1; }
+  printf 'engcluster%03d\n' "$last"
 }
 
 build_account_uid() {
   local ip last
-  ip="$(detect_ip)"
-  last="${ip##*.}"
-  echo $((BASE_UID + last))
+  ip="$(detect_ip)"; last="${ip##*.}"
+  echo $((BASE_UID + 10#$last))
+}
+
+new_password() {
+  # 128 bits of entropy represented as 32 lowercase hex characters; no shell-sensitive characters.
+  od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
 }
 
 ACCOUNT="$(build_account_name)"
-PASSWORD="${ACCOUNT}"
 USER_UID="$(build_account_uid)"
 
 cmd_create() {
   wait_ready
-  docker exec -u 0 "${CONTAINER_NAME}" bash -lc "
+  if docker exec -u 0 "$CONTAINER_NAME" id "$ACCOUNT" >/dev/null 2>&1; then
+    echo "[SKIP] renter account already exists: $ACCOUNT"
+    return 0
+  fi
+  local password
+  password="$(new_password)"
+  docker exec -u 0 "$CONTAINER_NAME" bash -lc "
 set -e
-if ! getent group '${ACCOUNT}' >/dev/null 2>&1; then
-  groupadd -g '${USER_UID}' '${ACCOUNT}'
-fi
-if ! id '${ACCOUNT}' >/dev/null 2>&1; then
-  useradd -m -u '${USER_UID}' -g '${ACCOUNT}' -G admin -s /bin/bash '${ACCOUNT}'
-fi
-echo '${ACCOUNT}:${PASSWORD}' | chpasswd
-mkdir -p /home/'${ACCOUNT}'/.ssh
-touch /home/'${ACCOUNT}'/.ssh/authorized_keys
-chmod 700 /home/'${ACCOUNT}'
-chmod 700 /home/'${ACCOUNT}'/.ssh
-chmod 600 /home/'${ACCOUNT}'/.ssh/authorized_keys
-chown -R '${ACCOUNT}':'${ACCOUNT}' /home/'${ACCOUNT}'
+if ! getent group '$ACCOUNT' >/dev/null 2>&1; then groupadd -g '$USER_UID' '$ACCOUNT'; fi
+useradd -m -u '$USER_UID' -g '$ACCOUNT' -G admin -s /bin/bash '$ACCOUNT'
+echo '$ACCOUNT:$password' | chpasswd
+mkdir -p /home/'$ACCOUNT'/.ssh
+touch /home/'$ACCOUNT'/.ssh/authorized_keys
+chmod 700 /home/'$ACCOUNT' /home/'$ACCOUNT'/.ssh
+chmod 600 /home/'$ACCOUNT'/.ssh/authorized_keys
+chown -R '$ACCOUNT':'$ACCOUNT' /home/'$ACCOUNT'
 /usr/local/sbin/sync-auth-db
 "
-  echo "[OK] created or updated account: ${ACCOUNT}"
-  echo "initial id/pw: ${ACCOUNT}"
+  echo "[OK] created renter account: $ACCOUNT"
+  echo "[CREDENTIAL] username=$ACCOUNT"
+  echo "[CREDENTIAL] temporary_password=$password"
+  echo "[IMPORTANT] record this password now; it is not stored by the installer"
 }
 
 cmd_reset_password() {
   wait_ready
-  docker exec -u 0 "${CONTAINER_NAME}" bash -lc "
+  local password
+  password="$(new_password)"
+  docker exec -u 0 "$CONTAINER_NAME" bash -lc "
 set -e
-id '${ACCOUNT}' >/dev/null 2>&1
-echo '${ACCOUNT}:${PASSWORD}' | chpasswd
+id '$ACCOUNT' >/dev/null 2>&1
+echo '$ACCOUNT:$password' | chpasswd
 /usr/local/sbin/sync-auth-db
 "
-  echo "[OK] password reset: ${ACCOUNT} / ${ACCOUNT}"
+  echo "[OK] password reset: $ACCOUNT"
+  echo "[CREDENTIAL] username=$ACCOUNT"
+  echo "[CREDENTIAL] temporary_password=$password"
 }
 
 cmd_reset_all() {
   wait_ready
-  docker exec -u 0 "${CONTAINER_NAME}" bash -lc "
+  local password
+  password="$(new_password)"
+  docker exec -u 0 "$CONTAINER_NAME" bash -lc "
 set -e
-id '${ACCOUNT}' >/dev/null 2>&1
-pkill -u '${ACCOUNT}' || true
-echo '${ACCOUNT}:${PASSWORD}' | chpasswd
-rm -f /home/'${ACCOUNT}'/.ssh/authorized_keys
-touch /home/'${ACCOUNT}'/.ssh/authorized_keys
-chmod 700 /home/'${ACCOUNT}'
-chmod 700 /home/'${ACCOUNT}'/.ssh
-chmod 600 /home/'${ACCOUNT}'/.ssh/authorized_keys
-chown -R '${ACCOUNT}':'${ACCOUNT}' /home/'${ACCOUNT}'
+id '$ACCOUNT' >/dev/null 2>&1
+pkill -u '$ACCOUNT' || true
+echo '$ACCOUNT:$password' | chpasswd
+rm -f /home/'$ACCOUNT'/.ssh/authorized_keys
+mkdir -p /home/'$ACCOUNT'/.ssh
+touch /home/'$ACCOUNT'/.ssh/authorized_keys
+chmod 700 /home/'$ACCOUNT' /home/'$ACCOUNT'/.ssh
+chmod 600 /home/'$ACCOUNT'/.ssh/authorized_keys
+chown -R '$ACCOUNT':'$ACCOUNT' /home/'$ACCOUNT'
 /usr/local/sbin/sync-auth-db
 "
-  echo "[OK] fully reset account: ${ACCOUNT}"
-  echo "password reset to: ${ACCOUNT}"
-  echo "authorized_keys cleared"
+  echo "[OK] fully reset account: $ACCOUNT"
+  echo "[CREDENTIAL] username=$ACCOUNT"
+  echo "[CREDENTIAL] temporary_password=$password"
+  echo "[OK] authorized_keys cleared"
 }
 
 cmd_delete() {
   wait_ready
-  docker exec -u 0 "${CONTAINER_NAME}" bash -lc "
+  docker exec -u 0 "$CONTAINER_NAME" bash -lc "
 set -e
-if id '${ACCOUNT}' >/dev/null 2>&1; then
-  pkill -u '${ACCOUNT}' || true
-  userdel -r '${ACCOUNT}' || true
-  groupdel '${ACCOUNT}' || true
+if id '$ACCOUNT' >/dev/null 2>&1; then
+  pkill -u '$ACCOUNT' || true
+  userdel -r '$ACCOUNT' || true
+  groupdel '$ACCOUNT' || true
   /usr/local/sbin/sync-auth-db
 fi
 "
-  echo "[OK] deleted account: ${ACCOUNT}"
+  echo "[OK] deleted account: $ACCOUNT"
 }
 
 cmd_status() {
   wait_ready
-  docker exec -u 0 "${CONTAINER_NAME}" bash -lc "
+  docker exec -u 0 "$CONTAINER_NAME" bash -lc "
 set -e
-id '${ACCOUNT}'
-getent passwd '${ACCOUNT}'
-ls -ld /home/'${ACCOUNT}'
-ls -ld /home/'${ACCOUNT}'/.ssh 2>/dev/null || true
+id '$ACCOUNT'
+getent passwd '$ACCOUNT'
+ls -ld /home/'$ACCOUNT'
+ls -ld /home/'$ACCOUNT'/.ssh 2>/dev/null || true
 "
 }
 
 cmd_list() {
   wait_ready
-  docker exec -u 0 "${CONTAINER_NAME}" bash -lc "
-awk -F: '\$1 ~ /^engcluster[0-9][0-9][0-9]$/ {print \$1, \$3, \$4, \$6}' /etc/passwd
-"
+  docker exec -u 0 "$CONTAINER_NAME" bash -lc "awk -F: '\$1 ~ /^engcluster[0-9][0-9][0-9]$/ {print \$1, \$3, \$4, \$6}' /etc/passwd"
 }
 
 ACTION="${1:-}"
-case "${ACTION}" in
-  create)          cmd_create ;;
-  reset-password)  cmd_reset_password ;;
-  reset-all)       cmd_reset_all ;;
-  delete)          cmd_delete ;;
-  status)          cmd_status ;;
-  list)            cmd_list ;;
+case "$ACTION" in
+  create) cmd_create ;;
+  reset-password) cmd_reset_password ;;
+  reset-all) cmd_reset_all ;;
+  delete) cmd_delete ;;
+  status) cmd_status ;;
+  list) cmd_list ;;
   *) usage; exit 1 ;;
 esac
