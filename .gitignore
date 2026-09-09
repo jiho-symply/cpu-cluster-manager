@@ -1,6 +1,7 @@
 .env
 config/nodes.yaml
 secrets/
+monitoring/targets/*.json
 __pycache__/
 *.py[cod]
 .venv/
