@@ -18,17 +18,6 @@ alerting:
             - alertmanager:9093
 
 scrape_configs:
-  - job_name: master-node
-    static_configs:
-      - targets:
-          - node-exporter-master:9100
-        labels:
-          node: master
-    metric_relabel_configs:
-      - source_labels: [__name__]
-        regex: 'node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_readonly|node_load1|node_load5|node_load15|node_boot_time_seconds|node_uname_info'
-        action: keep
-
   - job_name: compute-node
     file_sd_configs:
       - files:
