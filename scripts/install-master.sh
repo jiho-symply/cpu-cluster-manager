@@ -16,7 +16,6 @@ cd "$ROOT"
 if [ ! -f .env ]; then
   cp .env.example .env
   echo "[CREATED] .env from .env.example"
-  echo "[IMPORTANT] set ADMIN_PASSWORD in .env before exposing the service"
 fi
 
 NODE_COUNT="$(awk '/^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ {n++} END {print n+0}' "$CONFIG")"
@@ -25,9 +24,9 @@ NODE_COUNT="$(awk '/^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ {n++} END {prin
   exit 2
 }
 
-# Prometheus recommends leaving 15-20% headroom when using retention.size.
-# We budget 80 MiB of persistent archive blocks per compute node, keeping the
-# total design target below 100 MiB/node after normal WAL/head/compaction overhead.
+# Keep archive blocks below the requested 100 MB/node design target.
+# Prometheus retention.size excludes transient WAL/head/compaction overhead, so
+# persistent blocks are capped at 80 MB per compute node.
 ARCHIVE_MB=$((NODE_COUNT * 80))
 ARCHIVE_RETENTION_SIZE="${ARCHIVE_MB}MB"
 
@@ -40,19 +39,44 @@ set_env() {
 }
 set_env ARCHIVE_RETENTION_SIZE "$ARCHIVE_RETENTION_SIZE"
 
+ADMIN_PASSWORD="$(awk -F= '$1=="ADMIN_PASSWORD"{sub(/^[^=]*=/,""); print; exit}' .env)"
+if [ -z "$ADMIN_PASSWORD" ] || [ "$ADMIN_PASSWORD" = "change-this-password" ]; then
+  echo "[ERROR] set a non-default ADMIN_PASSWORD in .env before starting the management stack" >&2
+  exit 3
+fi
+
 echo "[INFO] compute nodes          : $NODE_COUNT"
-echo "[INFO] archive block budget   : $ARCHIVE_RETENTION_SIZE (80MB/node)"
+echo "[INFO] archive block budget   : $ARCHIVE_RETENTION_SIZE (80 MB/node)"
 echo "[INFO] archive max retention  : 5y"
 echo "[INFO] archive bucket         : 5m min/avg/max"
 
 ./scripts/prepare-master-ssh.sh "$CONFIG"
-python3 ./scripts/render-monitoring-targets.py "$CONFIG" monitoring/targets
+./scripts/render-monitoring-targets.sh "$CONFIG" monitoring/targets
 
 ./scripts/compose.sh config >/dev/null
 ./scripts/compose.sh up -d --build
+
+# Runtime health checks: fail installation if the stack came up but is unusable.
+wait_http() {
+  local name="$1" url="$2" i
+  for i in $(seq 1 60); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      echo "[OK] $name healthy: $url"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "[ERROR] $name health check failed: $url" >&2
+  return 1
+}
+
+wait_http "FastAPI" "http://127.0.0.1:${UI_PORT:-8080}/healthz"
+wait_http "Grafana" "http://127.0.0.1:${GRAFANA_PORT:-3000}/api/health"
+
 ./scripts/compose.sh ps
 
 echo
-printf '[OK] FastAPI control UI: http://127.0.0.1:%s\n' "$(awk -F= '$1=="UI_PORT"{print $2}' .env | tail -n1 | tr -d '\r' || true)"
-printf '[OK] Grafana monitoring : http://127.0.0.1:%s\n' "$(awk -F= '$1=="GRAFANA_PORT"{print $2}' .env | tail -n1 | tr -d '\r' || true)"
-echo "[NEXT] install the generated cluster-manager public key and node/install-node.sh on each compute node"
+echo "[OK] master installation complete"
+echo "[INFO] manager private key: $HOME/.ssh/cluster-manager_ed25519"
+echo "[INFO] manager public key : $HOME/.ssh/cluster-manager_ed25519.pub"
+echo "[NEXT] on each compute node: clone this repo, then run node/install-node.sh with this public key file"
