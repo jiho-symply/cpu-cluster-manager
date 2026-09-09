@@ -11,7 +11,7 @@ cd "$ROOT"
   exit 1
 }
 
-./scripts/preflight.sh master
+bash ./scripts/preflight.sh master
 
 if [ ! -f .env ]; then
   cp .env.example .env
@@ -38,16 +38,11 @@ get_env() {
   awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' .env
 }
 
-# 18 archive series/node at one sample per 5 minutes is expected to fit well
-# below 32 MiB/node for five years. A small 8 MiB WAL segment is configured
-# separately in Compose so the shared WAL/head overhead does not dominate the
-# requested <100 MB/node archive budget.
 ARCHIVE_MB=$((NODE_COUNT * 32))
 ARCHIVE_RETENTION_SIZE="${ARCHIVE_MB}MB"
 set_env ARCHIVE_RETENTION_SIZE "$ARCHIVE_RETENTION_SIZE"
 
-ADMIN_USERNAME="$(get_env ADMIN_USERNAME)"
-ADMIN_USERNAME="${ADMIN_USERNAME:-clusteradmin}"
+ADMIN_USERNAME="$(get_env ADMIN_USERNAME)"; ADMIN_USERNAME="${ADMIN_USERNAME:-clusteradmin}"
 ADMIN_PASSWORD="$(get_env ADMIN_PASSWORD)"
 GENERATED_ADMIN_PASSWORD=0
 if [ -z "$ADMIN_PASSWORD" ] || [ "$ADMIN_PASSWORD" = "change-this-password" ]; then
@@ -64,11 +59,11 @@ echo "[INFO] archive block budget   : $ARCHIVE_RETENTION_SIZE (32 MB/node)"
 echo "[INFO] archive max retention  : 5y"
 echo "[INFO] archive bucket         : 5m min/avg/max"
 
-./scripts/prepare-master-ssh.sh "$CONFIG"
-./scripts/render-monitoring-targets.sh "$CONFIG" monitoring/targets
+bash ./scripts/prepare-master-ssh.sh "$CONFIG"
+bash ./scripts/render-monitoring-targets.sh "$CONFIG" monitoring/targets
 
-./scripts/compose.sh config >/dev/null
-./scripts/compose.sh up -d --build
+bash ./scripts/compose.sh config >/dev/null
+bash ./scripts/compose.sh up -d --build
 
 wait_http() {
   local name="$1" url="$2" i
@@ -86,7 +81,7 @@ wait_http() {
 wait_http "FastAPI" "http://127.0.0.1:${UI_PORT}/healthz"
 wait_http "Grafana" "http://127.0.0.1:${GRAFANA_PORT}/api/health"
 
-./scripts/compose.sh ps
+bash ./scripts/compose.sh ps
 
 echo
 echo "[OK] master installation complete"
@@ -95,8 +90,8 @@ echo "[INFO] Grafana: http://127.0.0.1:${GRAFANA_PORT}"
 if [ "$GENERATED_ADMIN_PASSWORD" -eq 1 ]; then
   echo "[CREDENTIAL] admin_username=$ADMIN_USERNAME"
   echo "[CREDENTIAL] admin_password=$ADMIN_PASSWORD"
-  echo "[IMPORTANT] credential is stored in root-readable project .env (mode 600); record it in your password manager"
+  echo "[IMPORTANT] credential is stored in project .env (mode 600); record it in your password manager"
 fi
 echo "[INFO] manager private key: $HOME/.ssh/cluster-manager_ed25519"
 echo "[INFO] manager public key : $HOME/.ssh/cluster-manager_ed25519.pub"
-echo "[NEXT] securely copy the public key to each compute node, clone this repo there, and run node/install-node.sh"
+echo "[NEXT] securely copy the public key to each compute node, clone this repo there, and run: sudo bash node/install-node.sh <pubkey-file>"
