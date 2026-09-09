@@ -1,0 +1,16 @@
+route:
+  receiver: local-only
+  group_by: [alertname, node, mountpoint]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+
+receivers:
+  - name: local-only
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: [node, device, mountpoint]
