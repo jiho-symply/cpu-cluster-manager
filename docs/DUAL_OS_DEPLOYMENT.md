@@ -7,7 +7,9 @@ This repository supports the same service contract on both clusters:
 - Administrative SSH user: existing `ysadmin`
 - Control plane: FastAPI over a dedicated restricted SSH key
 - Monitoring: native `node_exporter` on each compute node, Prometheus + Grafana on each master
-- Long-term history: 30-second samples for 30 days, 1-hour aggregate series for 3 years
+- Recent history: 30-second samples for 30 days
+- Long-term history: 5-minute buckets with min/avg/max, maximum 5 years
+- Long-term archive block budget: 80MB per compute node
 - Alerts: disk-capacity alerts only
 
 ## Why monitoring is native on compute nodes
@@ -22,6 +24,28 @@ Every 30 seconds a systemd timer runs `docker stats --no-stream rent-node` and w
 - `cluster_rent_container_memory_limit_bytes`
 
 Prometheus combines those gauges with normal node_exporter host metrics. Only TCP/9100 is required from master to compute nodes.
+
+## Long-term archive contract
+
+Hot Prometheus creates one aggregate sample every 5 minutes. For each bucket it preserves min/avg/max for:
+
+- host CPU utilization;
+- host memory utilization;
+- the most-used real filesystem utilization;
+- `rent-node` CPU cores;
+- `rent-node` memory usage;
+- `rent-node` running ratio.
+
+That is 18 archive series per compute node. Archive Prometheus federates only metric names matching `archive_*5m` every 5 minutes.
+
+Retention uses both:
+
+- maximum time: 5 years;
+- maximum persistent-block size: 80MB × compute-node count.
+
+Whichever condition is reached first removes older blocks. The size budget deliberately leaves headroom below the operational target of 100MB per compute node. Prometheus `retention.size` applies to persistent blocks; WAL/head and temporary compaction overlap are shared Archive-Prometheus overhead and are not a strict per-node hard limit.
+
+No historical TSDB is stored on compute nodes themselves. Compute nodes store only node_exporter, the collector script, and the small current textfile metric.
 
 ## Master contract
 
@@ -91,6 +115,8 @@ cp .env.example .env
 ./scripts/install-master.sh config/nodes.yaml
 ```
 
+`install-master.sh` counts the compute nodes and sets `ARCHIVE_RETENTION_SIZE` to `80MB × node count` before starting the stack.
+
 Then, for every compute node, copy only the generated public key from that cluster's master and run:
 
 ```bash
@@ -116,6 +142,6 @@ Ubuntu 20.04 is outside Docker's current package-support list. This project ther
 
 ### CentOS 7
 
-CentOS 7 is EOL and current Docker CE packages no longer support it. Existing Docker installations can continue to be used if they pass preflight and runtime checks. The preflight also warns about very old RHEL/CentOS 7 kernels because container metrics and Docker stability are more sensitive there.
+CentOS 7 is EOL and current Docker CE packages no longer support it. Existing Docker installations can continue to be used if they pass preflight and runtime checks. The preflight also warns about very old RHEL/CentOS 7 kernels because Docker stability is more sensitive there.
 
 If either cluster later receives an OS upgrade, the monitoring/control contract does not change; only preflight/platform handling needs to be extended.
