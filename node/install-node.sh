@@ -34,7 +34,6 @@ case "$KEY_TYPE" in
   *) echo "unsupported SSH public key type: $KEY_TYPE" >&2; exit 4 ;;
 esac
 
-# Install/update the managed rent image source without touching persistent renter data.
 install -d -m 0755 /src/rent/image
 cp -a "$SCRIPT_DIR/rent-image/." /src/rent/image/
 chmod +x /src/rent/image/*.sh
@@ -42,7 +41,6 @@ chmod +x /src/rent/image/*.sh
 install -m 0755 "$SCRIPT_DIR/cluster-node-admin" /usr/local/sbin/cluster-node-admin
 install -m 0755 "$SCRIPT_DIR/cluster-node-ssh" /usr/local/bin/cluster-node-ssh
 
-# Add only the dedicated manager key, preserving existing human/admin keys.
 SSH_DIR="$ADMIN_HOME/.ssh"
 AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
 install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_GROUP" "$SSH_DIR"
@@ -69,8 +67,6 @@ chmod 0440 /etc/sudoers.d/cpu-cluster-manager
 visudo -cf /etc/sudoers.d/cpu-cluster-manager >/dev/null
 rm -f /etc/sudoers.d/cluster-ui
 
-# Bootstrap the rental container only when it does not already exist.
-# Re-running this installer therefore never resets /src/rent or renter credentials.
 IMAGE_NAME="$(awk -F= '$1=="IMAGE_NAME"{print $2; exit}' /src/rent/image/rent.env)"
 CONTAINER_NAME="$(awk -F= '$1=="CONTAINER_NAME"{print $2; exit}' /src/rent/image/rent.env)"
 IMAGE_NAME="${IMAGE_NAME:-rent-ubuntu:22.04}"
@@ -83,29 +79,31 @@ else
   echo "[SKIP] rental image already exists: $IMAGE_NAME"
 fi
 
+FRESH_SETUP=0
 if ! docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
   echo "[INFO] first-time rent-node setup"
+  FRESH_SETUP=1
   /src/rent/image/rentctl.sh setup
 else
-  echo "[SKIP] existing rent-node preserved"
+  echo "[SKIP] existing rent-node and persistent data preserved"
 fi
 
 "$SCRIPT_DIR/install-monitoring.sh"
 
-# Final runtime verification.
 docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 || {
   echo "[ERROR] rent-node does not exist after installation" >&2
   exit 5
 }
 CONTAINER_STATE="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME")"
-[ "$CONTAINER_STATE" = "running" ] || {
-  echo "[ERROR] rent-node is not running after installation: $CONTAINER_STATE" >&2
+if [ "$FRESH_SETUP" -eq 1 ] && [ "$CONTAINER_STATE" != "running" ]; then
+  echo "[ERROR] fresh rent-node setup is not running: $CONTAINER_STATE" >&2
   exit 5
-}
-curl -fsS http://127.0.0.1:9100/metrics | grep -q '^cluster_rent_container_' || {
+fi
+METRICS="$(curl -fsS http://127.0.0.1:9100/metrics)" || exit 6
+if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then
   echo "[ERROR] rent-node monitoring metrics are not available" >&2
   exit 6
-}
+fi
 
 echo "[OK] compute-node installation complete"
 echo "[OK] SSH control user: $ADMIN_USER"
