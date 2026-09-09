@@ -12,8 +12,22 @@ HOST_PORT_3="${HOST_PORT_3:-2203}"
 HOST_PORT_4="${HOST_PORT_4:-2204}"
 HOST_PORT_5="${HOST_PORT_5:-2205}"
 
+# Fail before deleting/recreating anything when a required host port is already occupied.
+check_port() {
+  local p="$1"
+  if command -v ss >/dev/null 2>&1 && ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${p}$"; then
+    # The existing rent-node may legitimately own the port during recreate; caller removes it first.
+    echo "[ERROR] host TCP port is already in use: $p" >&2
+    exit 4
+  fi
+}
+for p in "$HOST_SSH_PORT" "$HOST_PORT_1" "$HOST_PORT_2" "$HOST_PORT_3" "$HOST_PORT_4" "$HOST_PORT_5"; do
+  check_port "$p"
+done
+
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
+# :Z is required on SELinux-enforcing CentOS/RHEL hosts and is harmless on Ubuntu.
 docker run -d \
   --name "${CONTAINER_NAME}" \
   --hostname "${CONTAINER_NAME}" \
@@ -24,10 +38,10 @@ docker run -d \
   -p "${HOST_PORT_3}:2203" \
   -p "${HOST_PORT_4}:2204" \
   -p "${HOST_PORT_5}:2205" \
-  -v "${BASE}/home:/home" \
-  -v "${BASE}/work:/workspace" \
-  -v "${BASE}/ssh:/persist/ssh" \
-  -v "${BASE}/auth:/persist/auth" \
+  -v "${BASE}/home:/home:Z" \
+  -v "${BASE}/work:/workspace:Z" \
+  -v "${BASE}/ssh:/persist/ssh:Z" \
+  -v "${BASE}/auth:/persist/auth:Z" \
   "${IMAGE_NAME}"
 
 echo "[OK] container started: ${CONTAINER_NAME}"
