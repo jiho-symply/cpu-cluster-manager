@@ -4,31 +4,25 @@ set -euo pipefail
 ADMIN_USER="ysadmin"
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "run with sudo: sudo $0 <cluster-manager-public-key-file>" >&2
+  echo "run with sudo: sudo bash $0 <cluster-manager-public-key-file>" >&2
   exit 1
 fi
 
 PUBKEY_FILE="${1:-}"
 if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
-  echo "usage: sudo $0 <cluster-manager-public-key-file>" >&2
+  echo "usage: sudo bash $0 <cluster-manager-public-key-file>" >&2
   exit 2
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-"$SCRIPT_DIR/../scripts/preflight.sh" compute
+bash "$SCRIPT_DIR/../scripts/preflight.sh" compute
 
 ADMIN_HOME="$(getent passwd "$ADMIN_USER" | awk -F: '{print $6}')"
 ADMIN_GROUP="$(id -gn "$ADMIN_USER")"
-[ -n "$ADMIN_HOME" ] && [ -d "$ADMIN_HOME" ] || {
-  echo "cannot determine home directory for $ADMIN_USER" >&2
-  exit 3
-}
+[ -n "$ADMIN_HOME" ] && [ -d "$ADMIN_HOME" ] || { echo "cannot determine home directory for $ADMIN_USER" >&2; exit 3; }
 
 read -r KEY_TYPE KEY_DATA _ < "$PUBKEY_FILE" || true
-if [ -z "${KEY_TYPE:-}" ] || [ -z "${KEY_DATA:-}" ]; then
-  echo "invalid SSH public key file: $PUBKEY_FILE" >&2
-  exit 4
-fi
+if [ -z "${KEY_TYPE:-}" ] || [ -z "${KEY_DATA:-}" ]; then echo "invalid SSH public key file: $PUBKEY_FILE" >&2; exit 4; fi
 case "$KEY_TYPE" in
   ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) ;;
   *) echo "unsupported SSH public key type: $KEY_TYPE" >&2; exit 4 ;;
@@ -46,9 +40,7 @@ AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
 install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_GROUP" "$SSH_DIR"
 TMP_AUTH="$(mktemp)"
 trap 'rm -f "$TMP_AUTH"' EXIT
-if [ -f "$AUTHORIZED_KEYS" ]; then
-  awk -v key="$KEY_DATA" 'index($0, key) == 0 { print }' "$AUTHORIZED_KEYS" > "$TMP_AUTH"
-fi
+if [ -f "$AUTHORIZED_KEYS" ]; then awk -v key="$KEY_DATA" 'index($0, key) == 0 { print }' "$AUTHORIZED_KEYS" > "$TMP_AUTH"; fi
 printf '%s %s %s %s\n' \
   'command="/usr/local/bin/cluster-node-ssh",no-agent-forwarding,no-port-forwarding,no-pty,no-X11-forwarding' \
   "$KEY_TYPE" "$KEY_DATA" 'cpu-cluster-manager' >> "$TMP_AUTH"
@@ -88,22 +80,13 @@ else
   echo "[SKIP] existing rent-node and persistent data preserved"
 fi
 
-"$SCRIPT_DIR/install-monitoring.sh"
+bash "$SCRIPT_DIR/install-monitoring.sh"
 
-docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 || {
-  echo "[ERROR] rent-node does not exist after installation" >&2
-  exit 5
-}
+docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 || { echo "[ERROR] rent-node does not exist after installation" >&2; exit 5; }
 CONTAINER_STATE="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME")"
-if [ "$FRESH_SETUP" -eq 1 ] && [ "$CONTAINER_STATE" != "running" ]; then
-  echo "[ERROR] fresh rent-node setup is not running: $CONTAINER_STATE" >&2
-  exit 5
-fi
+if [ "$FRESH_SETUP" -eq 1 ] && [ "$CONTAINER_STATE" != "running" ]; then echo "[ERROR] fresh rent-node setup is not running: $CONTAINER_STATE" >&2; exit 5; fi
 METRICS="$(curl -fsS http://127.0.0.1:9100/metrics)" || exit 6
-if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then
-  echo "[ERROR] rent-node monitoring metrics are not available" >&2
-  exit 6
-fi
+if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then echo "[ERROR] rent-node monitoring metrics are not available" >&2; exit 6; fi
 
 echo "[OK] compute-node installation complete"
 echo "[OK] SSH control user: $ADMIN_USER"
