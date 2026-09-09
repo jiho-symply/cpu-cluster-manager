@@ -38,8 +38,8 @@ groups:
       - record: archive_node_memory_utilization_ratio_max1h
         expr: max_over_time(cluster_node_memory_utilization_ratio[1h])
 
-      - record: archive_node_disk_utilization_ratio_max1h
-        expr: max_over_time(cluster_node_disk_utilization_ratio_max[1h])
+      - record: archive_node_filesystem_utilization_ratio_max1h
+        expr: max_over_time(cluster_node_filesystem_utilization_ratio[1h])
 
       - record: archive_rent_cpu_cores_avg1h
         expr: avg_over_time(cluster_rent_cpu_cores[1h])
