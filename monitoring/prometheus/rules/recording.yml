@@ -19,10 +19,10 @@ groups:
       - record: cluster_node_disk_utilization_ratio_max
         expr: max by (cluster, platform, node) (cluster_node_filesystem_utilization_ratio)
 
-      - record: cluster_rent_cpu_percent
-        expr: max by (cluster, platform, node) (cluster_rent_container_cpu_percent)
+      - record: cluster_rent_cpu_cores
+        expr: max by (cluster, platform, node) (cluster_rent_container_cpu_percent) / 100
 
-      - record: cluster_rent_memory_usage_bytes
+      - record: cluster_rent_memory_working_set_bytes
         expr: max by (cluster, platform, node) (cluster_rent_container_memory_usage_bytes)
 
       - record: cluster_rent_running
@@ -41,11 +41,11 @@ groups:
         expr: max_over_time(cluster_node_memory_utilization_ratio[1h])
       - record: archive_node_filesystem_utilization_ratio_max1h
         expr: max_over_time(cluster_node_filesystem_utilization_ratio[1h])
-      - record: archive_rent_cpu_percent_avg1h
-        expr: avg_over_time(cluster_rent_cpu_percent[1h])
-      - record: archive_rent_cpu_percent_max1h
-        expr: max_over_time(cluster_rent_cpu_percent[1h])
-      - record: archive_rent_memory_usage_bytes_avg1h
-        expr: avg_over_time(cluster_rent_memory_usage_bytes[1h])
-      - record: archive_rent_memory_usage_bytes_max1h
-        expr: max_over_time(cluster_rent_memory_usage_bytes[1h])
+      - record: archive_rent_cpu_cores_avg1h
+        expr: avg_over_time(cluster_rent_cpu_cores[1h])
+      - record: archive_rent_cpu_cores_max1h
+        expr: max_over_time(cluster_rent_cpu_cores[1h])
+      - record: archive_rent_memory_working_set_bytes_avg1h
+        expr: avg_over_time(cluster_rent_memory_working_set_bytes[1h])
+      - record: archive_rent_memory_working_set_bytes_max1h
+        expr: max_over_time(cluster_rent_memory_working_set_bytes[1h])
