@@ -12,51 +12,23 @@ need_root() {
   fi
 }
 
-cpu_percent() {
-  local a b idle_a total_a idle_b total_b diff_idle diff_total
-  read -r _ a1 a2 a3 a4 a5 a6 a7 a8 _ < /proc/stat
-  idle_a=$((a4 + a5)); total_a=$((a1+a2+a3+a4+a5+a6+a7+a8))
-  sleep 0.15
-  read -r _ b1 b2 b3 b4 b5 b6 b7 b8 _ < /proc/stat
-  idle_b=$((b4 + b5)); total_b=$((b1+b2+b3+b4+b5+b6+b7+b8))
-  diff_idle=$((idle_b-idle_a)); diff_total=$((total_b-total_a))
-  awk -v i="$diff_idle" -v t="$diff_total" 'BEGIN { if (t <= 0) print "0.0%"; else printf "%.1f%%\n", (1-i/t)*100 }'
-}
-
-human_kib() {
-  awk -v kib="$1" 'BEGIN {
-    if (kib >= 1073741824) printf "%.1f TiB", kib/1073741824;
-    else if (kib >= 1048576) printf "%.1f GiB", kib/1048576;
-    else if (kib >= 1024) printf "%.1f MiB", kib/1024;
-    else printf "%d KiB", kib;
-  }'
-}
-
 summary() {
-  local mem_total mem_avail mem_used disk used size status uptime c_cpu c_mem renter
-  mem_total="$(awk '/MemTotal:/ {print $2}' /proc/meminfo)"
-  mem_avail="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
-  mem_used=$((mem_total-mem_avail))
-  read -r size used _ < <(df -Pk / | awk 'NR==2 {print $2, $3, $5}')
+  local status uptime renter
+  status="missing"
+  uptime=""
+  renter="-"
 
-  status="missing"; uptime=""; c_cpu="-"; c_mem="-"; renter="-"
   if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
     status="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME")"
     if [ "$status" = "running" ]; then
       uptime="$(docker inspect -f '{{.State.StartedAt}}' "$CONTAINER_NAME")"
-      IFS=$'\t' read -r c_cpu c_mem < <(docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' "$CONTAINER_NAME")
       renter="$(docker exec "$CONTAINER_NAME" sh -lc "awk -F: '\$1 ~ /^engcluster[0-9][0-9][0-9]\$/ {print \$1; exit}' /etc/passwd" 2>/dev/null || true)"
       [ -n "$renter" ] || renter="-"
     fi
   fi
 
-  printf 'HOST_CPU=%s\n' "$(cpu_percent)"
-  printf 'HOST_MEM=%s / %s\n' "$(human_kib "$mem_used")" "$(human_kib "$mem_total")"
-  printf 'ROOT_DISK=%s / %s\n' "$(human_kib "$used")" "$(human_kib "$size")"
   printf 'CONTAINER_STATUS=%s\n' "$status"
   printf 'CONTAINER_UPTIME=%s\n' "$uptime"
-  printf 'CONTAINER_CPU=%s\n' "$c_cpu"
-  printf 'CONTAINER_MEM=%s\n' "$c_mem"
   printf 'RENTER=%s\n' "$renter"
 }
 
