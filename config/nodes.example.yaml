@@ -1,4 +1,5 @@
 cluster: cluster1
+platform: ubuntu20
 ssh_user: ysadmin
 nodes:
   - name: cpu-01
