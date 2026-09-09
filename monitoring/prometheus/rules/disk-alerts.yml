@@ -1,0 +1,35 @@
+groups:
+  - name: disk-capacity-only
+    interval: 1m
+    rules:
+      - alert: DiskSpaceWarning
+        expr: |
+          (
+            100 * node_filesystem_avail_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|tracefs|proc|sysfs|cgroup2?|autofs|mqueue|debugfs|securityfs|pstore|configfs|fusectl|rpc_pipefs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|tracefs|proc|sysfs|cgroup2?|autofs|mqueue|debugfs|securityfs|pstore|configfs|fusectl|rpc_pipefs"}
+            < 15
+          )
+          and on (instance, device, mountpoint)
+          node_filesystem_readonly == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Disk space below 15% on {{ $labels.node }}'
+          description: '{{ $labels.node }} {{ $labels.mountpoint }} has less than 15% available space.'
+
+      - alert: DiskSpaceCritical
+        expr: |
+          (
+            100 * node_filesystem_avail_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|tracefs|proc|sysfs|cgroup2?|autofs|mqueue|debugfs|securityfs|pstore|configfs|fusectl|rpc_pipefs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|tracefs|proc|sysfs|cgroup2?|autofs|mqueue|debugfs|securityfs|pstore|configfs|fusectl|rpc_pipefs"}
+            < 5
+          )
+          and on (instance, device, mountpoint)
+          node_filesystem_readonly == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Disk space below 5% on {{ $labels.node }}'
+          description: '{{ $labels.node }} {{ $labels.mountpoint }} has less than 5% available space.'
