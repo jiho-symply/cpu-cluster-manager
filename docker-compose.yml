@@ -48,7 +48,8 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=3y
+      - --storage.tsdb.retention.time=5y
+      - --storage.tsdb.retention.size=${ARCHIVE_RETENTION_SIZE:?run scripts/install-master.sh to set ARCHIVE_RETENTION_SIZE}
     volumes:
       - ./monitoring/prometheus-archive/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_archive_data:/prometheus
