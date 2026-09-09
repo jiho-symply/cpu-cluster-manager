@@ -1,7 +1,7 @@
 global:
   scrape_interval: 30s
   scrape_timeout: 10s
-  evaluation_interval: 1m
+  evaluation_interval: 30s
 
 rule_files:
   - /etc/prometheus/rules/*.yml
@@ -19,6 +19,12 @@ scrape_configs:
           - /etc/prometheus/targets/node-exporter.json
         refresh_interval: 1m
     metric_relabel_configs:
+      # Total host CPU utilization only needs idle counters. Dropping the other
+      # per-core modes substantially reduces 30-day hot-storage cardinality on
+      # large 96-thread servers without losing the dashboard metric we use.
+      - source_labels: [__name__, mode]
+        regex: 'node_cpu_seconds_total;(guest|guest_nice|iowait|irq|nice|softirq|steal|system|user)'
+        action: drop
       - source_labels: [__name__]
         regex: 'node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_readonly|node_load1|node_load5|node_load15|node_boot_time_seconds|node_uname_info|cluster_rent_container_.*'
         action: keep
