@@ -7,12 +7,12 @@ INSTALL_DIR="/usr/local/bin"
 SERVICE_USER="node-exporter"
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "run with sudo: sudo $0" >&2
+  echo "run with sudo: sudo bash $0" >&2
   exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-"$SCRIPT_DIR/../scripts/preflight.sh" compute
+bash "$SCRIPT_DIR/../scripts/preflight.sh" compute
 
 ARCH="$(uname -m)"
 case "$ARCH" in
