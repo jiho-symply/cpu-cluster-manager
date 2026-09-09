@@ -1,201 +1,123 @@
 # CPU Cluster Manager
 
-Cluster 1(Ubuntu 20.04)과 Cluster 2(CentOS 7)를 같은 운영 모델로 관리하기 위한 경량 control/monitoring stack이다.
+Cluster 1(Ubuntu 20.04)과 Cluster 2(CentOS 7)를 같은 운영 모델로 관리하는 control/monitoring stack이다.
 
-## Architecture
+## Service contract
 
-- **FastAPI Control Plane (`:8080`)**
-  - `rent-node` 상태 / renter 계정 표시
-  - Start / Stop / Restart / Recreate / Logs
-  - 각 compute node에는 기존 `ysadmin` + Cluster Manager 전용 SSH key로 접근
-  - 상세 자원 history는 Grafana로 연결
-- **Grafana (`:3000`)**
-  - Host CPU / Memory / Disk
-  - `rent-node` CPU / Memory / running ratio
-  - Recent: 30초 수집 기반 최근 30일
-  - Long-term: 5분 bucket min/avg/max, 최대 5년
-- **Prometheus Hot**
-  - compute node의 native `node_exporter:9100`을 30초마다 scrape
-  - 30일 보관
-  - 5분 장기 aggregate recording series 생성
-- **Prometheus Archive**
-  - Hot Prometheus의 `archive_*5m` series만 federation
-  - 5분 간격 저장
-  - 최대 5년
-  - persistent block budget: **80MB × compute-node count**
-- **Alertmanager**
-  - Disk capacity alert만 처리
-  - Warning: available < 15% for 15m
-  - Critical: available < 5% for 5m
+- **FastAPI Control Plane (`127.0.0.1:8080`)**: `rent-node` 상태, renter, Start/Stop/Restart/Recreate/Logs
+- **Grafana (`127.0.0.1:3000`)**: host CPU/RAM/disk, `rent-node` CPU/RAM/running history
+- **Prometheus Hot**: 30초 scrape, 30일 retention
+- **Prometheus Archive**: 5분 bucket의 min/avg/max, 최대 5년
+- **Alertmanager**: disk-capacity alert만 정의
+- **Compute monitoring**: native node_exporter `:9100` + textfile collector; cAdvisor 없음
+- **Control SSH**: 기존 `ysadmin` 계정 + master별 전용 restricted SSH key
 
-```text
-Browser
-  ├─ FastAPI :8080 ──SSH──> ysadmin@compute-node ──> Docker/rentctl
-  └─ Grafana :3000
-          ├─ Prometheus Hot (30s / 30d)
-          │      └─ node_exporter :9100
-          │              ├─ host metrics
-          │              └─ textfile metrics from docker stats rent-node
-          └─ Prometheus Archive (5m aggregate / max 5y)
-```
+## Turn-key boundary
 
-## Why no cAdvisor
+코드는 OS 차이를 자동 감지하지만 아래 네 가지는 public Git repository에 안전하게 넣을 수 없거나 기존 인프라에 의존하므로 사전 조건이다.
 
-관리 대상 container가 노드당 `rent-node` 하나이므로 cAdvisor 전체를 띄우지 않는다. 각 compute node의 systemd timer가 30초마다 `docker stats --no-stream rent-node`를 읽어 node_exporter textfile collector metric으로 기록한다.
+1. 각 host에 동작하는 **Docker Engine**이 이미 설치되어 있어야 한다. Installer는 Ubuntu 20.04/CentOS 7의 기존 Docker를 자동 upgrade하지 않는다.
+2. 각 host에 기존 **`ysadmin`** 계정이 있어야 하고, master에서 Docker를 사용할 수 있어야 한다.
+3. 각 master의 `config/nodes.yaml`에는 실제 compute-node IP/hostname을 사용자가 작성해야 한다.
+4. master가 생성한 `cluster-manager_ed25519.pub`은 해당 cluster의 compute node에 안전하게 전달해야 한다. Private key는 master 밖으로 복사하지 않는다.
 
-이 구조는 Ubuntu 20.04와 CentOS 7에서 cgroup mount 방식 차이를 피하고 monitoring port도 `9100` 하나로 줄인다.
+또한 network ACL은 master→compute TCP/22 및 TCP/9100을 허용해야 한다. Installer는 사이트별 firewall/iptables 정책을 자동 변경하지 않는다.
 
-## Repository layout
+## Before merging to main
 
-```text
-cpu-cluster-manager/
-├── docker-compose.yml
-├── .env.example
-├── config/
-│   ├── nodes.example.yaml
-│   └── nodes.cluster2.example.yaml
-├── manager/
-├── node/
-│   ├── install-node.sh
-│   ├── install-monitoring.sh
-│   ├── rent-node-metrics.sh
-│   ├── cluster-node-admin
-│   ├── cluster-node-ssh
-│   └── rent-image/
-├── monitoring/
-│   ├── prometheus/
-│   ├── prometheus-archive/
-│   ├── alertmanager/
-│   ├── grafana/
-│   └── targets/
-├── scripts/
-│   ├── preflight.sh
-│   ├── compose.sh
-│   ├── install-master.sh
-│   ├── prepare-master-ssh.sh
-│   └── render-monitoring-targets.py
-└── docs/
-    └── DUAL_OS_DEPLOYMENT.md
-```
-
-## Public repository에서 제외되는 정보
-
-다음은 commit하지 않는다.
-
-- 실제 master / compute-node IP
-- `.env`
-- `config/nodes.yaml`
-- SSH private key
-- 실제 `known_hosts`
-- 생성된 `monitoring/targets/*.json`
-- password / token / credential
-
-## Cluster inventory
-
-Cluster 1 example:
-
-```yaml
-cluster: cluster1
-platform: ubuntu20
-ssh_user: ysadmin
-nodes:
-  - name: cpu-01
-    host: <COMPUTE_NODE_IP>
-    port: 22
-```
-
-Cluster 2 example:
-
-```yaml
-cluster: cluster2
-platform: centos7
-ssh_user: ysadmin
-nodes:
-  - name: cpu-07
-    host: <COMPUTE_NODE_IP>
-    port: 22
-```
-
-실제 inventory는 각 master의 `config/nodes.yaml`에만 둔다.
+현재 검증 중인 구현은 `dual-os-support` branch에 있다. 이 branch가 `main`에 merge되기 전에는 plain `git clone`만으로 최신 installer가 checkout되지 않는다.
 
 ## Master install
 
-Master에서도 OS 차이는 installer가 감지한다. 기존 Docker Engine은 자동 교체/upgrade하지 않는다.
+Cluster 1:
 
 ```bash
 git clone https://github.com/jiho-symply/cpu-cluster-manager.git
 cd cpu-cluster-manager
 git checkout dual-os-support
-cp config/nodes.example.yaml config/nodes.yaml   # Cluster 2는 cluster2 example 사용
-# config/nodes.yaml 수정
-./scripts/install-master.sh config/nodes.yaml
+cp config/nodes.example.yaml config/nodes.yaml
+# config/nodes.yaml의 host를 실제 값으로 수정
+bash scripts/install-master.sh config/nodes.yaml
 ```
 
-`install-master.sh`가 수행하는 작업:
+Cluster 2는 `config/nodes.cluster2.example.yaml`을 사용한다.
 
-1. Ubuntu 20.04 / CentOS 7, kernel, Docker, Compose, `ysadmin` preflight
-2. Cluster Manager 전용 SSH key 준비
-3. Prometheus file-SD target 생성
-4. compute-node 수 계산
-5. `ARCHIVE_RETENTION_SIZE = 80MB × node_count`를 `.env`에 기록
-6. Compose config 검증
+`install-master.sh`는 다음을 수행한다.
+
+1. Ubuntu 20.04 / CentOS 7, kernel, SELinux, Docker, `ysadmin` preflight
+2. `.env` 생성 및 random admin password 생성
+3. master 전용 SSH key 생성
+4. `known_hosts`에 새 node만 추가하며 기존 trust entry는 보존
+5. Prometheus target 생성 (host Python 불필요)
+6. archive block cap 계산: **32 MB × compute-node count**
 7. FastAPI / Prometheus Hot / Prometheus Archive / Alertmanager / Grafana 시작
+8. FastAPI/Grafana health check
+
+Host에 Compose가 있으면 그것을 사용한다. 없으면 `docker/compose:1.29.2`를 ephemeral client로 사용하므로 host package 설치가 필요 없다.
 
 ## Compute-node install
 
-Master에서 public key만 전달한다.
+Master가 만든 public key만 compute node로 전달한다.
 
 ```bash
 scp ~/.ssh/cluster-manager_ed25519.pub \
   ysadmin@<NODE_IP>:/tmp/cluster-manager_ed25519.pub
 ```
 
-Compute node에서:
+Compute node:
 
 ```bash
 git clone https://github.com/jiho-symply/cpu-cluster-manager.git
 cd cpu-cluster-manager
 git checkout dual-os-support
-sudo ./node/install-node.sh /tmp/cluster-manager_ed25519.pub
+sudo bash node/install-node.sh /tmp/cluster-manager_ed25519.pub
 rm -f /tmp/cluster-manager_ed25519.pub
 ```
 
-Installer가 수행하는 작업:
+Fresh node에서는 installer가 자동으로:
 
-1. OS/Docker/kernel preflight
-2. 기존 `ysadmin` 확인
-3. rent management scripts 설치
-4. restricted manager SSH public key 추가
-5. `cluster-node-admin` + sudo allowlist 설치
-6. native node_exporter 설치
-7. `rent-node-metrics` systemd service/timer 설치
-8. `:9100/metrics` health check
+- rent Ubuntu 22.04 image build
+- `/src/rent` persistent layout 생성
+- `rent-node` 최초 생성
+- `engclusterXXX` renter 생성 및 **random temporary password 1회 출력**
+- restricted manager SSH key 설치
+- native node_exporter 설치 및 checksum 검증
+- 30초 systemd timer 기반 `rent-node` metrics 설치
+- container/metrics health check
 
-Monitoring history는 compute node에 저장하지 않는다. Compute node에는 node_exporter binary와 작은 textfile만 존재하고, 실제 TSDB history는 cluster master의 Prometheus volume에 저장된다.
+재실행 시에는 기존 `rent-node`, `/src/rent` 데이터, renter password를 초기화하지 않는다.
 
-## Network contract
+## End-to-end verification
 
-```text
-Master -> Compute :22/tcp    SSH control
-Master -> Compute :9100/tcp  Prometheus metrics
+모든 compute node 설치 후 master에서:
+
+```bash
+bash scripts/verify-cluster.sh config/nodes.yaml
 ```
 
-`9100`은 인증 없는 read-only metrics endpoint이므로 해당 cluster master에서만 접근 가능하도록 firewall/network ACL을 제한한다.
+검증 항목:
 
-## Monitoring policy
+- 각 node restricted SSH control path
+- 각 node `:9100/metrics`
+- custom `cluster_rent_container_*` metric
+- master의 FastAPI/Prometheus/Alertmanager/Grafana container state
 
-### Recent / Hot
+## Monitoring
+
+### Hot
 
 ```text
-scrape interval  30s
-retention        30d
+scrape      30s
+retention   30d
 ```
 
-### Long-term / Archive
+필요한 metric만 저장하며 host CPU는 total utilization 계산에 필요한 idle counter만 유지해 고-core 서버 cardinality를 줄인다.
 
-각 **5분 bucket**마다 다음 값을 기록한다.
+### Archive
 
-| Resource | Stored aggregate |
+각 5분 bucket마다 아래 항목의 `min / avg / max`를 저장한다.
+
+| Resource | Aggregate |
 |---|---|
 | Host CPU utilization | min / avg / max |
 | Host memory utilization | min / avg / max |
@@ -204,46 +126,55 @@ retention        30d
 | `rent-node` memory usage | min / avg / max |
 | `rent-node` running ratio | min / avg / max |
 
-따라서 장기 cardinality는 기본적으로 **18 series / compute node**로 고정된다.
+총 **18 series/node**, bucket `5m`, 최대 retention `5y`다.
 
-```text
-bucket            5m
-maximum retention 5y
-archive series    18/node
-block budget      80MB/node
-```
+Archive persistent block cap은 **32 MB/node**이고 WAL segment는 8 MB로 축소한다. `retention.time`과 `retention.size` 중 먼저 도달한 조건이 적용된다. 이는 `<100 MB/node`를 목표로 한 보수적 설계지만 Prometheus compaction/WAL/head의 순간적 overhead까지 수학적으로 hard-cap하는 것은 아니다. Pilot 후 master에서 실제 `du`를 확인해야 한다.
 
-Prometheus Archive에는 time retention과 size retention을 동시에 적용한다. 둘 중 먼저 도달하는 조건이 오래된 block을 제거한다.
-
-Prometheus 공식 가이드의 평균 1–2 bytes/sample을 적용하면 18 series × 5분 × 5년은 약 9.47M samples/node, 즉 sample chunk payload 기준 약 9–19MB/node 규모다. 실제 index, metadata, compaction overhead는 별도로 존재하므로 persistent block cap을 80MB/node로 두어 100MB/node 운영 목표에 여유를 둔다.
-
-주의: Prometheus `retention.size`는 persistent block을 제한한다. WAL/head와 compaction 중 일시적 중복 공간까지 포함한 물리적 총 사용량을 정확히 100MB/node로 hard-limit하는 기능은 아니다. 이 overhead는 cluster master의 하나의 Archive Prometheus가 모든 노드에 대해 공유한다.
-
-Grafana Long-term dashboard는 `min / avg / max`를 동시에 보여주며 다음 범위를 선택할 수 있다.
-
-```text
-30d / 90d / 180d / 1y / 2y / 3y / 4y / 5y
-```
+Grafana는 별도 custom resolution selector 없이 datasource 최소 interval `5m`과 표준 `$__interval`을 사용해 조회 기간/화면 폭에 따라 해상도를 자동 조절한다.
 
 ## Disk alert only
-
-CPU/RAM/container-down alert는 정의하지 않는다.
 
 ```text
 Warning   available < 15% for 15m
 Critical  available < 5%  for 5m
 ```
 
-pseudo filesystem / Docker overlay는 제외한다.
+pseudo filesystem과 Docker overlay는 제외한다. 현재 Alertmanager receiver는 local-only이므로 Grafana/Prometheus에서 firing 상태는 보이지만 외부 email/Slack 전송은 receiver를 추가하기 전까지 발생하지 않는다.
 
-## Persistent monitoring data
+## Network
 
 ```text
-prometheus_hot_data       30-day high-resolution metrics
-prometheus_archive_data   5-minute aggregate, max 5 years
-alertmanager_data         alert state / silences
+Master -> Compute :22/tcp    restricted SSH control
+Master -> Compute :9100/tcp  Prometheus scrape
 ```
 
-`docker compose down`은 volume을 유지한다.
+`9100`은 인증 없는 read-only metrics endpoint이므로 대응 master/network에서만 접근하도록 제한한다.
 
-**`docker compose down -v`는 monitoring history를 삭제하므로 사용하지 않는다.**
+FastAPI/Grafana는 master loopback에 bind된다. 관리 PC에서는 SSH tunnel을 사용한다.
+
+```bash
+ssh -L 8080:127.0.0.1:8080 -L 3000:127.0.0.1:3000 ysadmin@<MASTER_IP>
+```
+
+## Persistent data
+
+Compute:
+
+```text
+/src/rent/home
+/src/rent/work
+/src/rent/ssh
+/src/rent/auth
+```
+
+Master Docker volumes:
+
+```text
+prometheus_hot_data
+prometheus_archive_data
+alertmanager_data
+```
+
+`docker compose down -v` 또는 이에 준하는 volume 삭제는 monitoring history를 삭제하므로 사용하지 않는다.
+
+자세한 OS별 설명은 `docs/DUAL_OS_DEPLOYMENT.md`를 참고한다.
