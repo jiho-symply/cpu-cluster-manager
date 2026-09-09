@@ -6,21 +6,120 @@
   "id": null,
   "links": [],
   "panels": [
-    {"id":1,"type":"timeseries","title":"Host CPU · hourly avg/max","datasource":{"type":"prometheus","uid":"prometheus-archive"},"gridPos":{"h":8,"w":12,"x":0,"y":0},"fieldConfig":{"defaults":{"unit":"percent"},"overrides":[]},"options":{"legend":{"displayMode":"list","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"none"}},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"100 * archive_node_cpu_utilization_ratio_avg1h{node=\"$node\"}","legendFormat":"1h avg","range":true,"refId":"A"},{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"100 * archive_node_cpu_utilization_ratio_max1h{node=\"$node\"}","legendFormat":"1h max","range":true,"refId":"B"}]},
-    {"id":2,"type":"timeseries","title":"Host Memory · hourly avg/max","datasource":{"type":"prometheus","uid":"prometheus-archive"},"gridPos":{"h":8,"w":12,"x":12,"y":0},"fieldConfig":{"defaults":{"unit":"percent"},"overrides":[]},"options":{"legend":{"displayMode":"list","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"none"}},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"100 * archive_node_memory_utilization_ratio_avg1h{node=\"$node\"}","legendFormat":"1h avg","range":true,"refId":"A"},{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"100 * archive_node_memory_utilization_ratio_max1h{node=\"$node\"}","legendFormat":"1h max","range":true,"refId":"B"}]},
-    {"id":3,"type":"timeseries","title":"Filesystem · hourly max used","datasource":{"type":"prometheus","uid":"prometheus-archive"},"gridPos":{"h":8,"w":12,"x":0,"y":8},"fieldConfig":{"defaults":{"unit":"percent"},"overrides":[]},"options":{"legend":{"displayMode":"list","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"none"}},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"100 * archive_node_filesystem_utilization_ratio_max1h{node=\"$node\"}","legendFormat":"{{mountpoint}}","range":true,"refId":"A"}]},
-    {"id":4,"type":"timeseries","title":"rent-node CPU · hourly avg/max","datasource":{"type":"prometheus","uid":"prometheus-archive"},"gridPos":{"h":8,"w":12,"x":12,"y":8},"fieldConfig":{"defaults":{"unit":"none"},"overrides":[]},"options":{"legend":{"displayMode":"list","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"none"}},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"archive_rent_cpu_cores_avg1h{node=\"$node\"}","legendFormat":"1h avg","range":true,"refId":"A"},{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"archive_rent_cpu_cores_max1h{node=\"$node\"}","legendFormat":"1h max","range":true,"refId":"B"}]},
-    {"id":5,"type":"timeseries","title":"rent-node Memory · hourly avg/max","datasource":{"type":"prometheus","uid":"prometheus-archive"},"gridPos":{"h":8,"w":24,"x":0,"y":16},"fieldConfig":{"defaults":{"unit":"bytes"},"overrides":[]},"options":{"legend":{"displayMode":"list","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"none"}},"targets":[{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"archive_rent_memory_working_set_bytes_avg1h{node=\"$node\"}","legendFormat":"1h avg","range":true,"refId":"A"},{"datasource":{"type":"prometheus","uid":"prometheus-archive"},"editorMode":"code","expr":"archive_rent_memory_working_set_bytes_max1h{node=\"$node\"}","legendFormat":"1h max","range":true,"refId":"B"}]}
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Host CPU · 5m min / avg / max",
+      "datasource": {"type": "prometheus", "uid": "prometheus-archive"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "100 * archive_node_cpu_utilization_ratio_min5m{node=\"$node\"}", "legendFormat": "min", "refId": "A"},
+        {"expr": "100 * archive_node_cpu_utilization_ratio_avg5m{node=\"$node\"}", "legendFormat": "avg", "refId": "B"},
+        {"expr": "100 * archive_node_cpu_utilization_ratio_max5m{node=\"$node\"}", "legendFormat": "max", "refId": "C"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Host Memory · 5m min / avg / max",
+      "datasource": {"type": "prometheus", "uid": "prometheus-archive"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "100 * archive_node_memory_utilization_ratio_min5m{node=\"$node\"}", "legendFormat": "min", "refId": "A"},
+        {"expr": "100 * archive_node_memory_utilization_ratio_avg5m{node=\"$node\"}", "legendFormat": "avg", "refId": "B"},
+        {"expr": "100 * archive_node_memory_utilization_ratio_max5m{node=\"$node\"}", "legendFormat": "max", "refId": "C"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Most-used filesystem · 5m min / avg / max",
+      "datasource": {"type": "prometheus", "uid": "prometheus-archive"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "100 * archive_node_disk_utilization_ratio_min5m{node=\"$node\"}", "legendFormat": "min", "refId": "A"},
+        {"expr": "100 * archive_node_disk_utilization_ratio_avg5m{node=\"$node\"}", "legendFormat": "avg", "refId": "B"},
+        {"expr": "100 * archive_node_disk_utilization_ratio_max5m{node=\"$node\"}", "legendFormat": "max", "refId": "C"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "rent-node CPU cores · 5m min / avg / max",
+      "datasource": {"type": "prometheus", "uid": "prometheus-archive"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "archive_rent_cpu_cores_min5m{node=\"$node\"}", "legendFormat": "min", "refId": "A"},
+        {"expr": "archive_rent_cpu_cores_avg5m{node=\"$node\"}", "legendFormat": "avg", "refId": "B"},
+        {"expr": "archive_rent_cpu_cores_max5m{node=\"$node\"}", "legendFormat": "max", "refId": "C"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "rent-node Memory · 5m min / avg / max",
+      "datasource": {"type": "prometheus", "uid": "prometheus-archive"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "archive_rent_memory_working_set_bytes_min5m{node=\"$node\"}", "legendFormat": "min", "refId": "A"},
+        {"expr": "archive_rent_memory_working_set_bytes_avg5m{node=\"$node\"}", "legendFormat": "avg", "refId": "B"},
+        {"expr": "archive_rent_memory_working_set_bytes_max5m{node=\"$node\"}", "legendFormat": "max", "refId": "C"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "rent-node Running ratio · 5m min / avg / max",
+      "datasource": {"type": "prometheus", "uid": "prometheus-archive"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "archive_rent_running_min5m{node=\"$node\"}", "legendFormat": "min", "refId": "A"},
+        {"expr": "archive_rent_running_avg5m{node=\"$node\"}", "legendFormat": "avg", "refId": "B"},
+        {"expr": "archive_rent_running_max5m{node=\"$node\"}", "legendFormat": "max", "refId": "C"}
+      ]
+    }
   ],
-  "refresh":"",
-  "schemaVersion":41,
-  "tags":["cpu-cluster-manager","archive"],
-  "templating":{"list":[{"name":"node","label":"Node","type":"query","datasource":{"type":"prometheus","uid":"prometheus-archive"},"definition":"label_values(archive_node_cpu_utilization_ratio_avg1h, node)","query":{"query":"label_values(archive_node_cpu_utilization_ratio_avg1h, node)","refId":"StandardVariableQuery"},"refresh":1,"sort":1,"multi":false,"includeAll":false,"hide":0,"skipUrlSync":false}]},
-  "time":{"from":"now-1y","to":"now"},
-  "timepicker":{"refresh_intervals":["1h","6h"],"time_options":["30d","90d","180d","1y","2y","3y"]},
-  "timezone":"browser",
-  "title":"CPU Cluster · Long-term History",
-  "uid":"cluster-archive",
-  "version":1,
-  "weekStart":""
+  "refresh": "",
+  "schemaVersion": 41,
+  "tags": ["cpu-cluster-manager", "archive", "5m"],
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Node",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus-archive"},
+        "definition": "label_values(archive_node_cpu_utilization_ratio_avg5m, node)",
+        "query": {"query": "label_values(archive_node_cpu_utilization_ratio_avg5m, node)", "refId": "StandardVariableQuery"},
+        "refresh": 1,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
+  },
+  "time": {"from": "now-1y", "to": "now"},
+  "timepicker": {
+    "refresh_intervals": ["5m", "15m", "1h"],
+    "time_options": ["30d", "90d", "180d", "1y", "2y", "3y", "4y", "5y"]
+  },
+  "timezone": "browser",
+  "title": "CPU Cluster · Long-term History (5m buckets)",
+  "uid": "cluster-archive",
+  "version": 2,
+  "weekStart": ""
 }
