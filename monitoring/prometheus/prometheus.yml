@@ -1,0 +1,53 @@
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 1m
+
+storage:
+  tsdb:
+    retention:
+      time: 30d
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: master-node
+    static_configs:
+      - targets:
+          - node-exporter-master:9100
+        labels:
+          node: master
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_readonly|node_load1|node_load5|node_load15|node_boot_time_seconds|node_uname_info'
+        action: keep
+
+  - job_name: compute-node
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/node-exporter.json
+        refresh_interval: 1m
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_readonly|node_load1|node_load5|node_load15|node_boot_time_seconds|node_uname_info'
+        action: keep
+
+  - job_name: rent-container
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/cadvisor.json
+        refresh_interval: 1m
+    metric_relabel_configs:
+      - source_labels: [name]
+        regex: 'rent-node'
+        action: keep
+      - source_labels: [__name__]
+        regex: 'container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_memory_usage_bytes|container_spec_memory_limit_bytes|container_start_time_seconds|container_last_seen'
+        action: keep
