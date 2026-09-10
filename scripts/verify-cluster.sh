@@ -45,12 +45,14 @@ for entry in "${ENTRIES[@]}"; do
   host="${entry#*@}"
   echo "=== $name ($host) ==="
 
-  if SUMMARY="$(ssh -T -i "$KEY" -p 22 \
+  # Verify the exact SSH client/key/known_hosts path used by the web UI.
+  if SUMMARY="$(docker exec cpu-cluster-manager ssh -T \
+      -i /run/ssh/id_ed25519 -p 22 \
       -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=5 \
-      -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
-      "ysadmin@$host" summary)"; then
+      -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/run/ssh/known_hosts \
+      "ysadmin@$host" summary 2>&1)"; then
     printf '%s\n' "$SUMMARY"
-    echo "[OK] SSH control path"
+    echo "[OK] manager-container SSH control path"
     NODE_COMMIT="$(printf '%s\n' "$SUMMARY" | awk -F= '$1=="DEPLOY_COMMIT" {print $2; exit}')"
     if [ "$NODE_COMMIT" = "$EXPECTED_COMMIT" ]; then
       echo "[OK] deployed commit matches source: ${EXPECTED_COMMIT:0:12}"
@@ -59,7 +61,8 @@ for entry in "${ENTRIES[@]}"; do
       FAIL=1
     fi
   else
-    echo "[FAIL] SSH control path" >&2
+    printf '%s\n' "$SUMMARY" >&2
+    echo "[FAIL] manager-container SSH control path" >&2
     FAIL=1
   fi
 
