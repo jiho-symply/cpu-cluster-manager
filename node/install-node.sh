@@ -16,7 +16,8 @@ if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bash "$SCRIPT_DIR/../scripts/preflight.sh" compute
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+bash "$ROOT/scripts/preflight.sh" compute
 
 ADMIN_HOME="$(getent passwd "$ADMIN_USER" | awk -F: '{print $6}')"
 ADMIN_GROUP="$(id -gn "$ADMIN_USER")"
@@ -28,6 +29,8 @@ case "$KEY_TYPE" in
   ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) ;;
   *) echo "unsupported SSH public key type: $KEY_TYPE" >&2; exit 4 ;;
 esac
+
+RENT_TREE_SHA="$(git -C "$ROOT" rev-parse HEAD:node/rent-image 2>/dev/null || echo unknown)"
 
 # /src/rent/image is a deployed copy only. Runtime data directories are untouched.
 install -d -m 0755 /src/rent "$STATE_DIR"
@@ -71,12 +74,13 @@ IMAGE_NAME="$(awk -F= '$1=="IMAGE_NAME"{print $2; exit}' /src/rent/image/rent.en
 CONTAINER_NAME="$(awk -F= '$1=="CONTAINER_NAME"{print $2; exit}' /src/rent/image/rent.env)"
 IMAGE_NAME="${IMAGE_NAME:-rent-ubuntu:22.04}"
 CONTAINER_NAME="${CONTAINER_NAME:-rent-node}"
+IMAGE_TREE_SHA="$(docker image inspect "$IMAGE_NAME" --format '{{ index .Config.Labels "io.cpu-cluster-manager.rent-tree" }}' 2>/dev/null || true)"
 
-if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-  echo "[INFO] building rental image: $IMAGE_NAME"
-  /src/rent/image/rentctl.sh build
+if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1 || [ "$IMAGE_TREE_SHA" != "$RENT_TREE_SHA" ]; then
+  echo "[INFO] building rental image from Git tree: $RENT_TREE_SHA"
+  RENT_TREE_SHA="$RENT_TREE_SHA" /src/rent/image/rentctl.sh build
 else
-  echo "[SKIP] rental image already exists: $IMAGE_NAME"
+  echo "[SKIP] rental image already matches Git tree: $RENT_TREE_SHA"
 fi
 
 FRESH_SETUP=0
@@ -96,7 +100,7 @@ if [ "$FRESH_SETUP" -eq 1 ] && [ "$CONTAINER_STATE" != "running" ]; then echo "[
 METRICS="$(curl -fsS http://127.0.0.1:9100/metrics)" || exit 6
 if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then echo "[ERROR] rent-node monitoring metrics are not available" >&2; exit 6; fi
 
-bash "$SCRIPT_DIR/../scripts/write-deploy-state.sh" compute
+bash "$ROOT/scripts/write-deploy-state.sh" compute
 
 echo "[OK] compute-node installation complete"
 echo "[OK] SSH control user: $ADMIN_USER"
