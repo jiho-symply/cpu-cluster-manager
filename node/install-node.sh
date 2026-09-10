@@ -53,12 +53,29 @@ STAMPED_SOURCE_HASH="$(get_source source_hash)"
 [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid source commit stamp" >&2; exit 3; }
 [[ "$RENT_TREE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid rent-image tree stamp" >&2; exit 3; }
 [[ "$STAMPED_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || { echo "[ERROR] invalid source hash stamp" >&2; exit 3; }
-CURRENT_SOURCE_HASH="$(bash "$ROOT/scripts/source-hash.sh")"
+
+# /home is NFS-backed on computes. Immediately after a master-side git update,
+# an individual NFS client can briefly retain stale file/attribute cache even
+# though the master and other computes already see the new tree. Preserve the
+# integrity check, but allow that cache to converge before declaring corruption.
+SOURCE_HASH_RETRIES=15
+SOURCE_HASH_RETRY_SECONDS=5
+CURRENT_SOURCE_HASH=""
+for ((attempt=1; attempt<=SOURCE_HASH_RETRIES; attempt++)); do
+  CURRENT_SOURCE_HASH="$(bash "$ROOT/scripts/source-hash.sh")"
+  if [ "$CURRENT_SOURCE_HASH" = "$STAMPED_SOURCE_HASH" ]; then
+    break
+  fi
+  if [ "$attempt" -lt "$SOURCE_HASH_RETRIES" ]; then
+    echo "[WAIT] shared source view differs from master stamp (attempt $attempt/$SOURCE_HASH_RETRIES); retrying in ${SOURCE_HASH_RETRY_SECONDS}s" >&2
+    sleep "$SOURCE_HASH_RETRY_SECONDS"
+  fi
+done
 if [ "$CURRENT_SOURCE_HASH" != "$STAMPED_SOURCE_HASH" ]; then
-  echo "[ERROR] shared source changed after master stamp; refusing deployment" >&2
+  echo "[ERROR] shared source differs from master stamp after NFS cache convergence window; refusing deployment" >&2
   echo "        stamped=$STAMPED_SOURCE_HASH" >&2
   echo "        current=$CURRENT_SOURCE_HASH" >&2
-  echo "        run the master installer/update to restamp the source" >&2
+  echo "        inspect the compute /home mount and source tree; do not restamp blindly" >&2
   exit 3
 fi
 echo "[INFO] source commit: $DEPLOY_COMMIT"
