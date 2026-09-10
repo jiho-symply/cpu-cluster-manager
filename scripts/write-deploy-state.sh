@@ -7,9 +7,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST_DIR="/var/lib/cpu-cluster-manager"
 DEST="$DEST_DIR/deployed-version"
 
-COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-BRANCH="$(git -C "$ROOT" symbolic-ref --short -q HEAD 2>/dev/null || echo detached)"
-REMOTE="$(git -C "$ROOT" config --get remote.origin.url 2>/dev/null || echo unknown)"
+repo_git() {
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    sudo -u "$SUDO_USER" git -C "$ROOT" "$@"
+  else
+    git -C "$ROOT" "$@"
+  fi
+}
+
+COMMIT="$(repo_git rev-parse HEAD 2>/dev/null || echo unknown)"
+BRANCH="$(repo_git symbolic-ref --short -q HEAD 2>/dev/null || echo detached)"
+REMOTE="$(repo_git config --get remote.origin.url 2>/dev/null || echo unknown)"
 CLUSTER="-"
 if [ "$ROLE" = "master" ] && [ -f "$CONFIG" ]; then
   CLUSTER="$(awk -F= '$1=="CLUSTER" {sub(/^[^=]*=/,""); print; exit}' "$CONFIG")"
