@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dual-os-support]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run repository checks
+        run: bash scripts/static-check.sh
