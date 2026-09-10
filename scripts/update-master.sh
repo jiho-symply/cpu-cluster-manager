@@ -17,4 +17,5 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 
 git pull --ff-only
-exec bash ./scripts/install-master.sh "$CONFIG"
+bash ./scripts/install-master.sh "$CONFIG"
+bash ./scripts/verify-manager-ssh.sh "$CONFIG"
