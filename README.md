@@ -5,9 +5,9 @@ Cluster 1(Ubuntu 20.04)과 Cluster 2(CentOS 7)를 동일한 운영 모델로 관
 ## Operating model
 
 - **GitHub is the source of truth** for Dockerfile, rent scripts, compute management scripts, sudoers, systemd units, FastAPI, Docker Compose, Prometheus, Grafana, Alertmanager, installers/updaters/verifiers.
-- 각 cluster의 master가 `/home/ysadmin/cpu-cluster-manager` Git checkout을 관리한다. 현재 두 cluster 모두 `/home`이 compute에 NFS로 공유되므로 compute는 이 checkout을 **read-only deployment source**로 사용하고 별도 Git clone이나 Git 설치가 필요 없다.
+- 각 cluster의 master가 `/home/ysadmin/cpu-cluster-manager` Git checkout을 관리한다. 현재 두 cluster 모두 `/home`이 compute에 NFS로 공유되므로 compute는 이 checkout을 **deployment source**로 사용하고 별도 Git clone이나 Git 설치가 필요 없다.
 - 운영자가 직접 관리하는 secret/config는 master의 **`/var/lib/cpu-cluster-manager/cluster.local.env` 한 파일뿐**이다.
-- master SSH key, known_hosts, deploy state도 `/var/lib/cpu-cluster-manager`에 저장한다. `/var/lib`은 두 cluster 모두 host-local filesystem이다.
+- master SSH private key, known_hosts, deploy state도 `/var/lib/cpu-cluster-manager`에 저장한다. `/var/lib`은 두 cluster 모두 host-local filesystem이다.
 - `/src/rent/image`, `/usr/local/bin`, `/usr/local/sbin`, `/etc/systemd/system`, `/etc/sudoers.d`의 관련 파일은 shared Git source에서 각 compute의 local filesystem으로 설치되는 deployment copy다.
 - Git tag/release workflow는 쓰지 않는다. 실제 배포 버전은 Git commit SHA와 source SHA256으로 기록한다.
 
@@ -30,6 +30,7 @@ Cluster 1(Ubuntu 20.04)과 Cluster 2(CentOS 7)를 동일한 운영 모델로 관
 /home/ysadmin/cpu-cluster-manager/
 ├── .git/
 ├── .cluster-source-state        generated, non-secret commit/hash stamp
+├── .cluster-manager.pub         generated manager PUBLIC key only
 ├── cluster.local.env.example    template only
 ├── docker-compose.yml
 ├── manager/
@@ -40,6 +41,8 @@ Cluster 1(Ubuntu 20.04)과 Cluster 2(CentOS 7)를 동일한 운영 모델로 관
 
 `.cluster-source-state` contains the Git commit, branch, remote, rent-image Git tree SHA and a deterministic SHA256 of deployable source files. Compute installers recompute the SHA256 before changing the node; stale or modified shared source is rejected.
 
+`.cluster-manager.pub` is intentionally shared because it is only a public key. The corresponding private key never leaves the master-local `/var/lib/cpu-cluster-manager/ssh` directory.
+
 ### Master host-local state
 
 ```text
@@ -47,7 +50,7 @@ Cluster 1(Ubuntu 20.04)과 Cluster 2(CentOS 7)를 동일한 운영 모델로 관
 ├── cluster.local.env            only operator-managed config/secret, mode 600
 ├── deployed-version
 └── ssh/
-    ├── id_ed25519               master-only manager key
+    ├── id_ed25519               master-only manager private key
     ├── id_ed25519.pub
     └── known_hosts
 ```
@@ -135,30 +138,22 @@ bash scripts/install-master.sh
 
 If `ADMIN_PASSWORD` is blank, the installer generates a random 32-hex password and writes it to the same mode-600 file.
 
-Legacy pilot state under the shared home is migrated automatically: existing `cluster.local.env`, manager key and known_hosts are copied into host-local state; shared-home key copies are removed only after the new master stack is healthy.
+Legacy pilot state under the shared home is migrated automatically: existing `cluster.local.env`, manager key and known_hosts are copied into host-local state; shared-home private-key copies are removed only after the new master stack is healthy.
 
-A successful install requires FastAPI/Grafana health checks and stable state/restart counts for all six master containers.
+A successful install requires FastAPI/Grafana health checks and stable state/restart counts for all six master containers. The installer also publishes only the manager **public** key as `.cluster-manager.pub` on the shared source.
 
 ## Initial compute install
 
-The compute uses the master's shared `/home/ysadmin/cpu-cluster-manager` source checkout. Do **not** clone the repository separately on the compute.
+The compute uses the master's shared `/home/ysadmin/cpu-cluster-manager` source checkout. Do **not** clone the repository separately on the compute, install Git, or copy JSON/env/key files manually.
 
-From the master, copy only the public manager key:
-
-```bash
-scp /var/lib/cpu-cluster-manager/ssh/id_ed25519.pub \
-  ysadmin@<COMPUTE_PRIVATE_IP>:/tmp/cluster-manager.pub
-```
-
-On the compute:
+On each compute:
 
 ```bash
 cd /home/ysadmin/cpu-cluster-manager
-sudo bash node/install-node.sh /tmp/cluster-manager.pub
-rm -f /tmp/cluster-manager.pub
+sudo bash node/install-node.sh
 ```
 
-Before modifying the node, the installer verifies the shared source stamp and recomputes the source SHA256. Git is not required on compute hosts.
+The installer automatically reads the shared `.cluster-manager.pub`, verifies the shared source stamp, recomputes the source SHA256, and then deploys to host-local paths.
 
 The installer:
 
@@ -189,7 +184,7 @@ cd /home/ysadmin/cpu-cluster-manager
 bash node/update-node.sh
 ```
 
-Compute update does not run Git; it verifies the master stamp/hash and deploys to host-local paths.
+Compute update does not run Git; it verifies the master stamp/hash and deploys to host-local paths. Re-running it is idempotent with respect to the stored manager public key.
 
 ## Verification
 
@@ -253,6 +248,10 @@ Master -> Compute :9100/tcp  Prometheus scrape
 ```
 
 FastAPI and Grafana bind to master loopback. Master node_exporter is not published on a host port.
+
+## Existing shared `authorized_keys`
+
+Both validated clusters share `/home`, so `ysadmin`'s normal `~/.ssh/authorized_keys` is also infrastructure-shared. The compute installer adds only a forced-command/no-forwarding entry for the manager **public** key. The private manager key remains master-local under `/var/lib/cpu-cluster-manager/ssh`.
 
 ## Safety rules
 
