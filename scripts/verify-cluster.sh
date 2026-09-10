@@ -16,12 +16,15 @@ get_source() {
   local key="$1"
   awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$SOURCE_STATE"
 }
+CLUSTER="$(get_cfg CLUSTER)"
 NODES_SPEC="$(get_cfg NODES)"
 UI_HOST="$(get_cfg UI_HOST)"
 UI_PORT="$(get_cfg UI_PORT)"
+PEER_URL="$(get_cfg PEER_URL)"
 UI_PORT="${UI_PORT:-8080}"
 [ -n "$NODES_SPEC" ] && [ "$NODES_SPEC" != "EDIT_ME" ] || { echo "NODES is not configured" >&2; exit 1; }
 [ -n "$UI_HOST" ] && [ "$UI_HOST" != "AUTODETECT" ] || { echo "UI_HOST is not configured" >&2; exit 1; }
+[ "$(get_cfg ADMIN_PASSWORD)" = "clustermanager" ] || { echo "fixed management password policy is not applied" >&2; exit 1; }
 
 KEY="/var/lib/cpu-cluster-manager/ssh/id_ed25519"
 KNOWN_HOSTS="/var/lib/cpu-cluster-manager/ssh/known_hosts"
@@ -87,6 +90,13 @@ for c in \
   fi
 done
 
+if systemctl is-active --quiet cpu-cluster-master-control.socket && [ -S /run/cpu-cluster-manager/master-control.sock ]; then
+  echo "[OK] restricted master poweroff socket active"
+else
+  echo "[FAIL] restricted master poweroff socket inactive" >&2
+  FAIL=1
+fi
+
 if curl -fsS --connect-timeout 5 "http://${UI_HOST}:${UI_PORT}/healthz" >/dev/null; then
   echo "[OK] unified management endpoint: http://${UI_HOST}:${UI_PORT}"
 else
@@ -94,12 +104,36 @@ else
   FAIL=1
 fi
 
-GRAFANA_GATE_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 "http://${UI_HOST}:${UI_PORT}/grafana/api/health" || true)"
+GRAFANA_GATE_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 "http://${UI_HOST}:${UI_PORT}/${CLUSTER}/grafana/api/health" || true)"
 if [ "$GRAFANA_GATE_STATUS" = "302" ]; then
   echo "[OK] embedded Grafana is protected by management login"
 else
   echo "[FAIL] Grafana auth gate returned HTTP ${GRAFANA_GATE_STATUS:--}, expected 302" >&2
   FAIL=1
+fi
+
+COOKIE_JAR="$(mktemp)"
+trap 'rm -f "$COOKIE_JAR"' EXIT
+LOGIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 -c "$COOKIE_JAR" \
+  -H 'Content-Type: application/json' \
+  -d '{"password":"clustermanager"}' \
+  "http://${UI_HOST}:${UI_PORT}/api/login" || true)"
+if [ "$LOGIN_STATUS" = "200" ] && curl -fsS --connect-timeout 8 -b "$COOKIE_JAR" "http://${UI_HOST}:${UI_PORT}/api/clusters" >/dev/null; then
+  echo "[OK] fixed password-only login and cluster API"
+else
+  echo "[FAIL] password-only login/API check failed (HTTP ${LOGIN_STATUS:--})" >&2
+  FAIL=1
+fi
+rm -f "$COOKIE_JAR"
+trap - EXIT
+
+if [ "$CLUSTER" = "cluster1" ]; then
+  if [ "$PEER_URL" = "http://165.132.142.133:8080" ]; then
+    echo "[OK] Cluster 1 federation peer configured: $PEER_URL"
+  else
+    echo "[FAIL] Cluster 1 federation peer mismatch: ${PEER_URL:--}" >&2
+    FAIL=1
+  fi
 fi
 
 TARGET_FILE="monitoring/targets/node-exporter.json"
