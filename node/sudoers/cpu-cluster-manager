@@ -1,0 +1,7 @@
+ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin summary
+ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin start
+ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin stop
+ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin restart
+ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin recreate
+ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin reset-password
+ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin logs
