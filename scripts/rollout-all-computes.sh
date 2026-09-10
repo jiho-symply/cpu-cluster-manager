@@ -67,6 +67,7 @@ cleanup_bootstrap() {
     echo "[CLEANUP] removed temporary bootstrap SSH key"
   fi
   SUDO_PASS=""
+  unset SUDO_PASS || true
   rm -rf "$BOOT_DIR"
 }
 trap cleanup_bootstrap EXIT INT TERM
@@ -110,8 +111,13 @@ done
 echo "[4/7] Preflighting sudo on every compute"
 NEED_PASSWORD=0
 for entry in "${ENTRIES[@]}"; do
+  name="${entry%%@*}"
   host="${entry#*@}"
-  if ! ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
+  sudo_probe="$(ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' 2>&1 || true)"
+  if grep -Eqi 'must have a tty|terminal is required|no tty present' <<<"$sudo_probe"; then
+    fail "sudo on $name ($host) requires a TTY; refusing password transport that could echo credentials"
+  fi
+  if ! ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
     NEED_PASSWORD=1
   fi
 done
@@ -123,13 +129,16 @@ if [ "$NEED_PASSWORD" -eq 1 ]; then
   [ -n "$SUDO_PASS" ] || fail "empty sudo password"
 fi
 
+# Never allocate a pseudo-TTY while piping a password to sudo. A PTY can echo
+# stdin before sudo disables terminal echo, leaking the password into rollout
+# logs. sudo -S works over the non-PTY SSH channel on the validated hosts.
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
   host="${entry#*@}"
-  if ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
+  if ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
     :
   else
-    if ! printf '%s\n' "$SUDO_PASS" | ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" "sudo -S -p '' true" >/dev/null 2>&1; then
+    if ! printf '%s\n' "$SUDO_PASS" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "sudo -S -p '' true" >/dev/null 2>&1; then
       fail "sudo authentication preflight failed on $name ($host); no compute was modified"
     fi
   fi
@@ -144,13 +153,13 @@ run_remote_install() {
 
   echo "[INSTALL] $name ($host)"
   set +e
-  if ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
-    ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" \
+  if ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
+    ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
       "cd '$ROOT' && sudo -n bash node/install-node.sh '$ROOT/.cluster-manager.pub' && bash node/verify-node.sh" \
       >"$log" 2>&1
     rc=$?
   else
-    printf '%s\n' "$SUDO_PASS" | ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" \
+    printf '%s\n' "$SUDO_PASS" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
       "cd '$ROOT' && sudo -S -p '' bash node/install-node.sh '$ROOT/.cluster-manager.pub' && bash node/verify-node.sh" \
       >"$log" 2>&1
     rc=$?
@@ -163,7 +172,7 @@ run_remote_install() {
     return "$rc"
   fi
   echo "[OK] $name installed and verified"
-  tr -d '\r' < "$log" | grep -E '^\[CREDENTIAL\]' || true
+  grep -E '^\[CREDENTIAL\]' "$log" || true
 }
 
 # /home/ysadmin is shared inside each cluster. node/install-node.sh updates the
