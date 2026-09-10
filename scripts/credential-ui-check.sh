@@ -10,6 +10,8 @@ RENTER=node/rent-image/renter-account.sh
 RENTCTL=node/rent-image/rentctl.sh
 UI=manager/app/templates/index.html
 MAIN=manager/app/main.py
+LIVE=manager/app/live_metrics.py
+DASH=monitoring/grafana/dashboards/cluster-monitoring.json
 SSH_CLIENT=manager/app/ssh_client.py
 ADMIN=node/cluster-node-admin
 SSH_WRAPPER=node/cluster-node-ssh
@@ -56,29 +58,44 @@ fi
 grep -Fq 'kept until browser page reload' "$UI" || fail 'credential lifetime hint missing'
 echo '[OK] credentials persist across UI refreshes but not browser page reloads'
 
-echo '== action order and state-aware controls =='
+echo '== control table resource snapshot =='
+for field in cpu_percent memory_percent disk_percent; do
+  grep -Fq "$field" "$LIVE" || fail "live metric field missing: $field"
+  grep -Fq "$field" "$MAIN" || fail "control payload does not expose $field"
+  grep -Fq "$field" "$UI" || fail "control table does not render $field"
+done
+grep -Fq 'cluster_node_cpu_utilization_ratio' "$LIVE" || fail 'CPU control metric must come from Prometheus Hot recording series'
+grep -Fq 'cluster_node_memory_utilization_ratio' "$LIVE" || fail 'memory control metric must come from Prometheus Hot recording series'
+grep -Fq 'cluster_node_disk_utilization_ratio_max' "$LIVE" || fail 'disk control metric must come from Prometheus Hot recording series'
+echo '[OK] control table exposes current CPU/memory/disk percentages'
+
+echo '== reduced action set =='
 grep -Fq "'logs','Logs'" "$UI" || fail 'Logs action missing'
-grep -Fq "'start','Start',false,!canStart" "$UI" || fail 'Start must be disabled unless the container is startable'
-grep -Fq "'stop','Stop',false,!running" "$UI" || fail 'Stop must be disabled when the container is not running'
 grep -Fq "'restart','Restart',false,!running" "$UI" || fail 'Restart must be disabled when the container is not running'
 grep -Fq "'reset-password','Reset PW',true,!running" "$UI" || fail 'Reset PW must be disabled when the container is not running'
-grep -Fq "'recreate','Recreate',true" "$UI" || fail 'Recreate action missing'
 grep -Fq "'reboot','Reboot host',true" "$UI" || fail 'Reboot host action missing'
 grep -Fq "'reset','Full Reset',true" "$UI" || fail 'Full Reset must be the destructive reset action'
+for removed in "'start','Start'" "'stop','Stop'" "'recreate','Recreate'"; do
+  if grep -Fq "$removed" "$UI"; then fail "removed control button still present: $removed"; fi
+done
 python3 - "$UI" <<'PY'
 import re, sys
 text=open(sys.argv[1], encoding='utf-8').read()
-m=re.search(r"const safe=`([^`]+)`;", text)
-assert m, 'safe action group missing'
-s=m.group(1)
-assert s.index("'logs','Logs'") < s.index("'start','Start'"), 'Logs must be leftmost before Start'
+safe=re.search(r"const safe=`([^`]+)`;", text)
+risky=re.search(r"const risky=`([^`]+)`;", text)
+assert safe and risky, 'action groups missing'
+assert "'logs','Logs'" in safe.group(1), 'Logs must be the left action'
+assert "'restart','Restart'" in risky.group(1), 'Restart must remain available'
+assert "'reset-password','Reset PW'" in risky.group(1), 'Reset PW missing'
+assert "'reboot','Reboot host'" in risky.group(1), 'Reboot missing'
+assert "'reset','Full Reset'" in risky.group(1), 'Full Reset missing'
 PY
-echo '[OK] Logs is leftmost; container-state buttons disable correctly'
+echo '[OK] Logs is leftmost and Start/Stop/Recreate are removed'
 
 echo '== confirmation modal policy =='
 grep -Fq '<dialog id="confirm-dialog">' "$UI" || fail 'shared confirmation modal missing'
 grep -Fq 'function requestConfirmation(' "$UI" || fail 'confirmation modal helper missing'
-for action in start stop restart reset-password recreate reboot reset; do
+for action in restart reset-password reboot reset; do
   grep -Fq "case '$action':" "$UI" || fail "confirmation definition missing for $action"
 done
 if grep -Fq 'confirm(' "$UI"; then fail 'browser-native confirm() must not be used'; fi
@@ -88,7 +105,21 @@ grep -Fq 'logsDialog.showModal();' "$UI" || fail 'Logs must open immediately in 
 grep -Fq 'await requestConfirmation(confirmation.title' "$UI" || fail 'node mutations must await confirmation modal'
 grep -Fq "'Shutdown all compute nodes'" "$UI" || fail 'cluster compute shutdown must use confirmation modal'
 grep -Fq "'Shutdown master'" "$UI" || fail 'master shutdown must use confirmation modal'
-echo '[OK] every mutating control uses the shared modal; Logs opens immediately'
+echo '[OK] every visible mutating control uses the shared modal; Logs opens immediately'
+
+echo '== flat monitoring node selector =='
+grep -Fq 'function monitorEntries()' "$UI" || fail 'flat monitoring node inventory missing'
+grep -Fq 'id="monitor-node-select"' "$UI" || fail 'unified monitoring node selector missing'
+grep -Fq 'monitorActions.addEventListener(' "$UI" || fail 'monitor node selector handler missing'
+if grep -Fq 'monitor-cluster' "$UI"; then fail 'Monitoring must not expose cluster selector buttons'; fi
+python3 - "$DASH" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1], encoding='utf-8'))
+vars=data['templating']['list']
+node=next(v for v in vars if v.get('name')=='node')
+assert node.get('hide') == 2, node
+PY
+echo '[OK] monitoring shows one flat node list and hides Grafana-local selector'
 
 echo '== individual host reboot only =='
 grep -Fq 'reboot_host()' "$ADMIN" || fail 'compute reboot implementation missing'
@@ -97,10 +128,7 @@ for f in "$SSH_WRAPPER" "$SUDOERS" "$SSH_CLIENT"; do
   grep -Fq 'reboot' "$f" || fail "reboot control path missing from $f"
 done
 grep -Fq '"reboot"' "$MAIN" || fail 'individual-node API must expose reboot'
-if grep -Fq 'Power off host' "$UI"; then
-  fail 'individual Power off host control must not be exposed in the UI'
-fi
-# Poweroff is intentionally retained underneath for cluster-wide staged shutdown.
+if grep -Fq 'Power off host' "$UI"; then fail 'individual Power off host control must not be exposed in the UI'; fi
 grep -Fq 'poweroff_and_wait' "$SSH_CLIENT" || fail 'cluster-wide safe poweroff path must remain available'
 grep -Fq 'docker stop -t 30' "$ADMIN" || fail 'cluster-wide shutdown must still stop rent-node before compute poweroff'
 echo '[OK] individual host control exposes reboot; cluster-wide shutdown retains internal poweroff'
