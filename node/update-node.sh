@@ -12,11 +12,9 @@ if [ ! -f /var/lib/cpu-cluster-manager/manager.pub ]; then
   echo "[ERROR] stored manager public key is missing; run the initial compute installer first" >&2
   exit 2
 fi
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "[ERROR] tracked local changes exist; review them before updating" >&2
-  git status --short
-  exit 3
+if [ ! -f "$ROOT/.cluster-source-state" ]; then
+  echo "[ERROR] shared source stamp is missing; run the master installer/update first" >&2
+  exit 2
 fi
 
-git pull --ff-only
 exec sudo bash ./node/install-node.sh /var/lib/cpu-cluster-manager/manager.pub
