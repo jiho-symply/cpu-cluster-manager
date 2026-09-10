@@ -4,7 +4,7 @@ set -euo pipefail
 ACTION="${SSH_ORIGINAL_COMMAND:-}"
 
 case "$ACTION" in
-  summary|start|stop|restart|recreate|reset-password|logs|poweroff)
+  summary|start|stop|restart|recreate|reset-password|logs|reboot|poweroff)
     exec sudo -n /usr/local/sbin/cluster-node-admin "$ACTION"
     ;;
   "")
