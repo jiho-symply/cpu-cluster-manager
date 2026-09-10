@@ -6,10 +6,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import Response
 
 router = APIRouter(prefix="/prometheus-auto")
+app = FastAPI(title="CPU Cluster Prometheus Auto Router", docs_url=None, redoc_url=None)
 
 HOT_URL = "http://prometheus-hot:9090"
 ARCHIVE_URL = "http://prometheus-archive:9090"
@@ -105,6 +106,11 @@ def _proxy(method: str, url: str, body: bytes | None, content_type: str) -> tupl
         return 502, payload, "application/json"
 
 
+@router.get("/healthz")
+def healthz() -> dict[str, str | int]:
+    return {"status": "ok", "archive_step_seconds": int(ARCHIVE_STEP_SECONDS)}
+
+
 @router.api_route("/{path:path}", methods=["GET", "POST"])
 async def prometheus_auto(path: str, request: Request) -> Response:
     method = request.method.upper()
@@ -134,3 +140,6 @@ async def prometheus_auto(path: str, request: Request) -> Response:
         _proxy, method, target, routed_body, content_type
     )
     return Response(content=payload, status_code=status_code, media_type=response_type.split(";", 1)[0])
+
+
+app.include_router(router)
