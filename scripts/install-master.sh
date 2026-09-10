@@ -172,9 +172,11 @@ MONITORED_HOSTS=$((NODE_COUNT + 1))
 echo "[INFO] cluster                : $CLUSTER"
 echo "[INFO] compute nodes          : $NODE_COUNT"
 echo "[INFO] monitored hosts        : $MONITORED_HOSTS (master + compute)"
+echo "[INFO] hot resolution         : 5s (30d retention)"
 echo "[INFO] archive block budget   : $((MONITORED_HOSTS * 32))MB (32 MB/monitored host)"
 echo "[INFO] archive max retention  : 5y"
 echo "[INFO] archive bucket         : 5m min/avg/max"
+echo "[INFO] Grafana source policy  : <5m Hot / >=5m Archive automatically"
 echo "[INFO] shared source          : $ROOT"
 echo "[INFO] host-local state       : $STATE_DIR"
 echo "[INFO] host role              : master"
@@ -225,6 +227,7 @@ MASTER_CONTAINERS=(
   cpu-cluster-master-node-exporter
   cpu-cluster-prometheus-hot
   cpu-cluster-prometheus-archive
+  cpu-cluster-prometheus-router
   cpu-cluster-alertmanager
   cpu-cluster-grafana
 )
@@ -272,7 +275,7 @@ echo "[OK] master installation complete"
 echo "[INFO] operator-managed local config: $CONFIG"
 echo "[INFO] Management UI: http://${UI_HOST}:${UI_PORT}"
 echo "[INFO] login: password only (fixed campus policy)"
-echo "[INFO] Grafana: embedded under http://${UI_HOST}:${UI_PORT}/${CLUSTER}/grafana/"
+echo "[INFO] Grafana: one auto-resolution dashboard under http://${UI_HOST}:${UI_PORT}/${CLUSTER}/grafana/"
 echo "[INFO] Grafana backend diagnostic: http://127.0.0.1:${GRAFANA_PORT}"
 if [ -n "$PEER_URL" ]; then
   echo "[INFO] ${PEER_CLUSTER}: federated into this UI via ${PEER_URL}"
