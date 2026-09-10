@@ -45,18 +45,28 @@ for entry in "${ENTRIES[@]}"; do
     echo "invalid NODES entry: $entry" >&2
     exit 2
   }
-  if ssh-keygen -F "$host" -f "$KNOWN_HOSTS" >/dev/null 2>&1; then
-    echo "[KEEP] trusted host key already exists: $name ($host)"
+
+  HOST_KEYS="$(ssh-keygen -F "$host" -f "$KNOWN_HOSTS" 2>/dev/null || true)"
+  if printf '%s\n' "$HOST_KEYS" | grep -q ' ssh-ed25519 '; then
+    echo "[KEEP] trusted ED25519 host key already exists: $name ($host)"
     continue
   fi
-  echo "[ADD] scanning SSH host key: $name ($host)"
-  ssh-keyscan -T 5 -p 22 -H "$host" >> "$KNOWN_HOSTS" 2>/dev/null || {
-    echo "[ERROR] could not scan SSH host key: $name ($host)" >&2
+
+  if [ -n "$HOST_KEYS" ]; then
+    echo "[ADD] trusted host exists but ED25519 key is missing; scanning: $name ($host)"
+  else
+    echo "[ADD] scanning SSH host key: $name ($host)"
+  fi
+
+  SCANNED="$(ssh-keyscan -T 5 -p 22 -H -t ed25519 "$host" 2>/dev/null || true)"
+  if [ -z "$SCANNED" ]; then
+    echo "[ERROR] could not scan ED25519 SSH host key: $name ($host)" >&2
     exit 2
-  }
+  fi
+  printf '%s\n' "$SCANNED" >> "$KNOWN_HOSTS"
 done
 
 echo "[OK] manager key: $KEY"
 echo "[OK] public key : ${KEY}.pub"
 echo "[OK] known_hosts: $KNOWN_HOSTS"
-echo "[SECURITY] manager SSH state is host-local; existing host keys are preserved"
+echo "[SECURITY] manager SSH state is host-local; existing host keys are preserved and missing ED25519 keys are added"
