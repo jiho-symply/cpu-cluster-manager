@@ -49,17 +49,17 @@ MIRROR_TEST_OUTPUT="$(printf '%s\n' \
   'deb http://archive.ubuntu.com/ubuntu jammy main' \
   'deb http://security.ubuntu.com/ubuntu jammy-security main' \
   | sed -r "s#https?://(archive|security)\.ubuntu\.com/ubuntu#${MIRROR}#g")"
-if grep -Eq 'archive\.ubuntu\.com|security\.ubuntu\.com' <<<"$MIRROR_TEST_OUTPUT"; then
-  echo '[ERROR] mirror rewrite left a global Ubuntu archive URL unchanged' >&2
+MIRROR_TEST_EXPECTED="$(printf '%s\n' \
+  'deb http://kr.archive.ubuntu.com/ubuntu jammy main' \
+  'deb http://kr.archive.ubuntu.com/ubuntu jammy-security main')"
+if [ "$MIRROR_TEST_OUTPUT" != "$MIRROR_TEST_EXPECTED" ]; then
+  echo '[ERROR] Ubuntu mirror rewrite output mismatch' >&2
+  echo '--- expected ---' >&2
+  printf '%s\n' "$MIRROR_TEST_EXPECTED" >&2
+  echo '--- actual ---' >&2
   printf '%s\n' "$MIRROR_TEST_OUTPUT" >&2
   exit 1
 fi
-MIRROR_COUNT="$(grep -cF "$MIRROR" <<<"$MIRROR_TEST_OUTPUT")"
-[ "$MIRROR_COUNT" -eq 2 ] || {
-  echo '[ERROR] mirror rewrite did not map both archive and security URLs' >&2
-  printf '%s\n' "$MIRROR_TEST_OUTPUT" >&2
-  exit 1
-}
 echo '[OK] Korean Ubuntu mirror rewrite + single apt-get update'
 
 echo '== Python syntax =='
