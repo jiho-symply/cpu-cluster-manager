@@ -8,7 +8,7 @@ ENV TZ=Asia/Seoul
 # Keep the mirror as a build ARG so it can still be overridden explicitly.
 ARG UBUNTU_MIRROR=http://kr.archive.ubuntu.com/ubuntu
 
-RUN sed -ri "s|https?://(archive|security)\.ubuntu\.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
+RUN sed -ri "s#https?://(archive|security)\.ubuntu\.com/ubuntu#${UBUNTU_MIRROR}#g" /etc/apt/sources.list && \
     printf 'Acquire::Retries "5";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\nAcquire::Queue-Mode "access";\n' >/etc/apt/apt.conf.d/80-retries && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
