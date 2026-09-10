@@ -7,6 +7,7 @@ SSH_DIR="$STATE_DIR/ssh"
 DEFAULT_CONFIG="$STATE_DIR/cluster.local.env"
 CONFIG="${1:-$DEFAULT_CONFIG}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PUBLISHED_PUBKEY="$ROOT/.cluster-manager.pub"
 LEGACY_CONFIG="$ROOT/cluster.local.env"
 LEGACY_KEY="$HOME/.ssh/cluster-manager_ed25519"
 LEGACY_KNOWN_HOSTS="$HOME/.ssh/cluster-manager_known_hosts"
@@ -137,6 +138,8 @@ echo "[INFO] host-local state       : $STATE_DIR"
 
 bash ./scripts/write-source-state.sh "$CONFIG"
 bash ./scripts/prepare-master-ssh.sh "$CONFIG" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts"
+install -m 0644 "$SSH_DIR/id_ed25519.pub" "$PUBLISHED_PUBKEY"
+echo "[OK] manager public key published on shared source: $PUBLISHED_PUBKEY"
 bash ./scripts/render-monitoring-targets.sh "$CONFIG" monitoring/targets
 
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh config >/dev/null
@@ -203,4 +206,4 @@ echo "[INFO] operator-managed local config: $CONFIG"
 echo "[INFO] FastAPI: http://127.0.0.1:${UI_PORT}"
 echo "[INFO] Grafana: http://127.0.0.1:${GRAFANA_PORT}"
 echo "[INFO] manager public key: $SSH_DIR/id_ed25519.pub"
-echo "[NEXT] compute nodes use the shared source checkout; copy only this public key for initial authorization"
+echo "[NEXT] on each compute node: cd $ROOT && sudo bash node/install-node.sh"
