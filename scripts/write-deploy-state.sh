@@ -4,8 +4,6 @@ set -euo pipefail
 ROLE="${1:?usage: write-deploy-state.sh <master|compute> [cluster-config]}"
 CONFIG="${2:-cluster.local.env}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEST_DIR="/var/lib/cpu-cluster-manager"
-DEST="$DEST_DIR/deployed-version"
 
 repo_git() {
   if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
@@ -36,12 +34,25 @@ deployed_at=$(date -Is)
 repository=$REMOTE
 EOF
 
-if [ "$(id -u)" -eq 0 ]; then
-  install -d -m 0755 "$DEST_DIR"
-  install -m 0644 "$TMP" "$DEST"
-else
-  sudo -n install -d -m 0755 "$DEST_DIR"
-  sudo -n install -m 0644 "$TMP" "$DEST"
-fi
+case "$ROLE" in
+  master)
+    DEST_DIR="$HOME/.local/state/cpu-cluster-manager"
+    install -d -m 0700 "$DEST_DIR"
+    install -m 0600 "$TMP" "$DEST_DIR/deployed-version"
+    DEST="$DEST_DIR/deployed-version"
+    ;;
+  compute)
+    [ "$(id -u)" -eq 0 ] || { echo "[ERROR] compute deploy-state write requires root" >&2; exit 2; }
+    DEST_DIR="/var/lib/cpu-cluster-manager"
+    install -d -m 0755 "$DEST_DIR"
+    install -m 0644 "$TMP" "$DEST_DIR/deployed-version"
+    DEST="$DEST_DIR/deployed-version"
+    ;;
+  *)
+    echo "[ERROR] unsupported role: $ROLE" >&2
+    exit 2
+    ;;
+esac
 
 echo "[OK] deployed commit recorded: $COMMIT"
+echo "[OK] deploy state: $DEST"
