@@ -2,75 +2,92 @@
 set -euo pipefail
 
 ADMIN_USER="ysadmin"
-CONFIG="${1:-config/nodes.yaml}"
+CONFIG="${1:-cluster.local.env}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 if [ "$(id -un)" != "$ADMIN_USER" ]; then
   echo "[ERROR] run the master installer as $ADMIN_USER without sudo" >&2
-  echo "        sudo would place the dedicated SSH key under the wrong home directory" >&2
   exit 1
 fi
-
-[ -f "$CONFIG" ] || {
-  echo "nodes config not found: $CONFIG" >&2
-  echo "copy config/nodes.example.yaml or config/nodes.cluster2.example.yaml to config/nodes.yaml first" >&2
-  exit 1
-}
 
 bash ./scripts/preflight.sh master
 
-if [ ! -f .env ]; then
-  cp .env.example .env
-  chmod 600 .env
-  echo "[CREATED] .env from .env.example"
-fi
-
-NODE_COUNT="$(awk '/^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ {n++} END {print n+0}' "$CONFIG")"
-[ "$NODE_COUNT" -gt 0 ] || {
-  echo "no compute nodes found in $CONFIG" >&2
-  exit 2
+get_cfg() {
+  local key="$1"
+  awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$CONFIG"
 }
-
-set_env() {
+set_cfg() {
   local key="$1" value="$2" tmp
   tmp="$(mktemp)"
-  awk -F= -v k="$key" '$1 != k {print}' .env > "$tmp"
+  awk -F= -v k="$key" '$1 != k {print}' "$CONFIG" > "$tmp"
   printf '%s=%s\n' "$key" "$value" >> "$tmp"
-  mv "$tmp" .env
-  chmod 600 .env
-}
-get_env() {
-  local key="$1"
-  awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' .env
+  mv "$tmp" "$CONFIG"
+  chmod 600 "$CONFIG"
 }
 
-ARCHIVE_MB=$((NODE_COUNT * 32))
-ARCHIVE_RETENTION_SIZE="${ARCHIVE_MB}MB"
-set_env ARCHIVE_RETENTION_SIZE "$ARCHIVE_RETENTION_SIZE"
+if [ ! -f "$CONFIG" ]; then
+  cp cluster.local.env.example "$CONFIG"
+  chmod 600 "$CONFIG"
+  # Infer the logical cluster from the validated master OS for this deployment.
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  case "${ID:-}:${VERSION_ID:-}" in
+    ubuntu:20.04) DEFAULT_CLUSTER="cluster1" ;;
+    centos:7|centos:7.*) DEFAULT_CLUSTER="cluster2" ;;
+    *) DEFAULT_CLUSTER="cluster" ;;
+  esac
+  set_cfg CLUSTER "$DEFAULT_CLUSTER"
+  echo "[CREATED] $CONFIG"
+  echo "[NEXT] edit only NODES= in $CONFIG using private management IPs, then run this installer again"
+  exit 0
+fi
+chmod 600 "$CONFIG"
 
-ADMIN_USERNAME="$(get_env ADMIN_USERNAME)"; ADMIN_USERNAME="${ADMIN_USERNAME:-clusteradmin}"
-ADMIN_PASSWORD="$(get_env ADMIN_PASSWORD)"
+CLUSTER="$(get_cfg CLUSTER)"
+NODES="$(get_cfg NODES)"
+ADMIN_USERNAME="$(get_cfg ADMIN_USERNAME)"
+ADMIN_PASSWORD="$(get_cfg ADMIN_PASSWORD)"
+UI_PORT="$(get_cfg UI_PORT)"
+GRAFANA_PORT="$(get_cfg GRAFANA_PORT)"
+
+[ -n "$CLUSTER" ] && [ "$CLUSTER" != "AUTODETECT" ] || { echo "[ERROR] CLUSTER is not configured in $CONFIG" >&2; exit 2; }
+[ -n "$NODES" ] && [ "$NODES" != "EDIT_ME" ] || { echo "[ERROR] edit NODES= in $CONFIG first" >&2; exit 2; }
+ADMIN_USERNAME="${ADMIN_USERNAME:-clusteradmin}"
+UI_PORT="${UI_PORT:-8080}"
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+
 GENERATED_ADMIN_PASSWORD=0
-if [ -z "$ADMIN_PASSWORD" ] || [ "$ADMIN_PASSWORD" = "change-this-password" ]; then
+if [ -z "$ADMIN_PASSWORD" ]; then
   ADMIN_PASSWORD="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-  set_env ADMIN_PASSWORD "$ADMIN_PASSWORD"
+  set_cfg ADMIN_PASSWORD "$ADMIN_PASSWORD"
   GENERATED_ADMIN_PASSWORD=1
 fi
 
-UI_PORT="$(get_env UI_PORT)"; UI_PORT="${UI_PORT:-8080}"
-GRAFANA_PORT="$(get_env GRAFANA_PORT)"; GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+IFS=',' read -r -a NODE_ENTRIES <<< "$NODES"
+NODE_COUNT="${#NODE_ENTRIES[@]}"
+[ "$NODE_COUNT" -gt 0 ] || { echo "[ERROR] no compute nodes in $CONFIG" >&2; exit 2; }
 
+for entry in "${NODE_ENTRIES[@]}"; do
+  name="${entry%%@*}"
+  host="${entry#*@}"
+  [ "$host" != "$entry" ] && [ -n "$name" ] && [ -n "$host" ] || {
+    echo "[ERROR] invalid NODES entry: $entry (expected name@privateIPv4)" >&2
+    exit 2
+  }
+done
+
+echo "[INFO] cluster                : $CLUSTER"
 echo "[INFO] compute nodes          : $NODE_COUNT"
-echo "[INFO] archive block budget   : $ARCHIVE_RETENTION_SIZE (32 MB/node)"
+echo "[INFO] archive block budget   : $((NODE_COUNT * 32))MB (32 MB/node)"
 echo "[INFO] archive max retention  : 5y"
 echo "[INFO] archive bucket         : 5m min/avg/max"
 
 bash ./scripts/prepare-master-ssh.sh "$CONFIG"
 bash ./scripts/render-monitoring-targets.sh "$CONFIG" monitoring/targets
 
-bash ./scripts/compose.sh config >/dev/null
-bash ./scripts/compose.sh up -d --build
+CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh config >/dev/null
+CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh up -d --build
 
 wait_http() {
   local name="$1" url="$2" i
@@ -87,18 +104,19 @@ wait_http() {
 
 wait_http "FastAPI" "http://127.0.0.1:${UI_PORT}/healthz"
 wait_http "Grafana" "http://127.0.0.1:${GRAFANA_PORT}/api/health"
+CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh ps
 
-bash ./scripts/compose.sh ps
+if [ "$GENERATED_ADMIN_PASSWORD" -eq 1 ]; then
+  echo
+  echo "[CREDENTIAL] admin_username=$ADMIN_USERNAME"
+  echo "[CREDENTIAL] admin_password=$ADMIN_PASSWORD"
+  echo "[IMPORTANT] this credential is also stored in $CONFIG (mode 600)"
+fi
 
 echo
 echo "[OK] master installation complete"
+echo "[INFO] operator-managed local config: $ROOT/$CONFIG"
 echo "[INFO] FastAPI: http://127.0.0.1:${UI_PORT}"
 echo "[INFO] Grafana: http://127.0.0.1:${GRAFANA_PORT}"
-if [ "$GENERATED_ADMIN_PASSWORD" -eq 1 ]; then
-  echo "[CREDENTIAL] admin_username=$ADMIN_USERNAME"
-  echo "[CREDENTIAL] admin_password=$ADMIN_PASSWORD"
-  echo "[IMPORTANT] credential is stored in project .env (mode 600); record it in your password manager"
-fi
-echo "[INFO] manager private key: $HOME/.ssh/cluster-manager_ed25519"
-echo "[INFO] manager public key : $HOME/.ssh/cluster-manager_ed25519.pub"
-echo "[NEXT] securely copy the public key to each compute node, clone this repo there, and run: sudo bash node/install-node.sh <pubkey-file>"
+echo "[INFO] manager public key: $HOME/.ssh/cluster-manager_ed25519.pub"
+echo "[NEXT] copy that public key to each compute node and run: sudo bash node/install-node.sh <pubkey-file>"
