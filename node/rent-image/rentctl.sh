@@ -8,6 +8,7 @@ source /src/rent/image/rent.env
 BASE="${BASE:-/src/rent}"
 IMAGE_NAME="${IMAGE_NAME:-rent-ubuntu:22.04}"
 CONTAINER_NAME="${CONTAINER_NAME:-rent-node}"
+RENT_TREE_SHA="${RENT_TREE_SHA:-unknown}"
 
 usage() {
   cat <<USAGE
@@ -24,14 +25,14 @@ Usage:
 
 Functions:
   help            : 사용 가능한 기능과 역할 출력
-  build           : Docker 이미지 빌드
+  build           : Git-managed source로 Docker 이미지 빌드
   setup           : /src/rent 디렉토리 생성 + auth DB 초기화 + 컨테이너 실행 + 기본 대여 계정 생성
   reset           : 컨테이너 중지/삭제 + /src/rent 데이터 초기화 + auth DB 초기화 + 기본 대여 계정 재생성
   stop            : 컨테이너 중지
   restart         : 컨테이너 재시작
-  recreate        : 기존 컨테이너 삭제 후 재생성 (기존 /src/rent 데이터 유지)
+  recreate        : 기존 컨테이너 삭제 후 현재 이미지로 재생성 (기존 /src/rent 데이터 유지)
   status          : 컨테이너 실행 상태 + 저장소 디렉토리 상태 + 대여 계정 상태 확인
-  reset-password  : 기본 대여 계정 비밀번호를 초기값으로 재설정
+  reset-password  : 기본 대여 계정 비밀번호를 새로운 random temporary password로 재설정
 USAGE
 }
 
@@ -65,7 +66,10 @@ print_dir_sizes() {
 }
 
 cmd_build() {
-  sudo docker build -t "${IMAGE_NAME}" "${SCRIPT_DIR}"
+  sudo docker build \
+    --label "io.cpu-cluster-manager.rent-tree=${RENT_TREE_SHA}" \
+    -t "${IMAGE_NAME}" \
+    "${SCRIPT_DIR}"
 }
 
 cmd_setup() {
@@ -110,6 +114,11 @@ cmd_recreate() {
 cmd_status() {
   echo "=== docker ps ==="
   sudo docker ps -a --filter "name=${CONTAINER_NAME}"
+  echo
+
+  echo "=== image source revision ==="
+  sudo docker image inspect "$IMAGE_NAME" \
+    --format 'rent-tree={{ index .Config.Labels "io.cpu-cluster-manager.rent-tree" }}' 2>/dev/null || true
   echo
 
   echo "=== storage (recursive size) ==="
