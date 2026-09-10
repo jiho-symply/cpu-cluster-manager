@@ -6,7 +6,10 @@ services:
     ports:
       - "${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}:8080"
     volumes:
-      - ./gateway/nginx-${CLUSTER:?set CLUSTER in host-local cluster config}.conf:/etc/nginx/nginx.conf:ro
+      # Keep interpolation deliberately simple for Docker Compose 2.6 on the
+      # validated CentOS 7 master. CLUSTER is already required below by the
+      # manager service, so a separate :? expression is unnecessary here.
+      - ./gateway/nginx-${CLUSTER}.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - cluster-manager
       - grafana
@@ -113,7 +116,7 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_SERVER_DOMAIN: ${UI_HOST:?set UI_HOST in host-local cluster config}
-      GF_SERVER_ROOT_URL: http://${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}/${CLUSTER:?set CLUSTER in host-local cluster config}/grafana/
+      GF_SERVER_ROOT_URL: http://${UI_HOST}:${UI_PORT:-8080}/${CLUSTER}/grafana/
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/cluster-recent.json
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
