@@ -1,16 +1,29 @@
 apiVersion: 1
 
 datasources:
+  - name: Prometheus Auto
+    uid: prometheus-auto
+    type: prometheus
+    access: proxy
+    url: http://prometheus-router:8080/prometheus-auto
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 5s
+
+  # Retained as non-default diagnostic datasources. Normal dashboards use
+  # Prometheus Auto, which routes <5m query steps to Hot and >=5m to Archive.
   - name: Prometheus Hot
     uid: prometheus-hot
     type: prometheus
     access: proxy
     url: http://prometheus-hot:9090
-    isDefault: true
+    isDefault: false
     editable: false
     jsonData:
       httpMethod: POST
-      timeInterval: 30s
+      timeInterval: 5s
 
   - name: Prometheus Archive
     uid: prometheus-archive
