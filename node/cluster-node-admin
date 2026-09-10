@@ -75,11 +75,12 @@ case "$ACTION" in
   restart) "$RENTCTL" restart ;;
   recreate) "$RENTCTL" recreate ;;
   reset-password) "$RENTCTL" reset-password ;;
+  reset) "$RENTCTL" reset ;;
   logs) docker logs --tail 200 "$CONTAINER_NAME" 2>&1 ;;
   reboot) reboot_host ;;
   poweroff) poweroff_host ;;
   *)
-    echo "usage: $0 {summary|start|stop|restart|recreate|reset-password|logs|reboot|poweroff}" >&2
+    echo "usage: $0 {summary|start|stop|restart|recreate|reset-password|reset|logs|reboot|poweroff}" >&2
     exit 2
     ;;
 esac
