@@ -19,3 +19,4 @@ jobs:
         run: |
           bash scripts/static-check.sh
           bash scripts/check-manager-container-security.sh
+          bash scripts/credential-ui-check.sh
