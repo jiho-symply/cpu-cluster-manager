@@ -144,6 +144,27 @@ function openMonitoring(cluster,kind,node=''){
   selectView('monitoring');
 }
 
+async function refreshShutdownState(c){
+  if(!c.reachable) return;
+  try{
+    const r=await fetch(`/api/clusters/${encodeURIComponent(c.cluster)}/shutdown/state`);
+    if(r.status===401){location.replace('/login');return;}
+    if(!r.ok) return;
+    const state=await r.json();
+    const button=document.querySelector(`[data-shutdown-master="${CSS.escape(c.cluster)}"]`);
+    const note=document.querySelector(`[data-shutdown-status="${CSS.escape(c.cluster)}"]`);
+    if(!button||!note) return;
+    button.disabled=!state.ready;
+    if(state.ready){
+      note.textContent='All compute nodes are confirmed offline. Master shutdown is enabled.';
+    }else if((state.online||[]).length){
+      note.textContent=`Master shutdown locked. Online compute nodes: ${(state.online||[]).join(', ')}`;
+    }else{
+      note.textContent='Master shutdown locked. Re-run Shutdown computes to explicitly confirm all offline nodes.';
+    }
+  }catch(_err){}
+}
+
 async function loadClusters(){
   const res=await fetch('/api/clusters',{headers:{Accept:'application/json'}});
   if(res.status===401){location.replace('/login');return;}
@@ -152,6 +173,7 @@ async function loadClusters(){
   clusterData=data.clusters||[];
   clustersEl.innerHTML=clusterData.map(renderCluster).join('');
   renderMonitoringButtons();
+  await Promise.all(clusterData.map(refreshShutdownState));
   updated.textContent=new Date().toLocaleTimeString();
 }
 
@@ -187,15 +209,7 @@ async function shutdownComputes(cluster,button){
     const r=await fetch(`/api/clusters/${encodeURIComponent(cluster)}/shutdown/computes`,{method:'POST'});
     const body=await r.json();
     if(!r.ok||!body.all_offline) throw new Error(body.detail?JSON.stringify(body.detail):JSON.stringify(body.nodes||body));
-    if(statusEl) statusEl.textContent='All compute nodes are confirmed offline. Master shutdown is now enabled.';
-    const masterButton=document.querySelector(`[data-shutdown-master="${CSS.escape(cluster)}"]`);
-    if(masterButton) masterButton.disabled=false;
     await loadClusters();
-    // loadClusters re-renders buttons, so re-enable the newly rendered master button.
-    const newMasterButton=document.querySelector(`[data-shutdown-master="${CSS.escape(cluster)}"]`);
-    const newStatus=document.querySelector(`[data-shutdown-status="${CSS.escape(cluster)}"]`);
-    if(newMasterButton) newMasterButton.disabled=false;
-    if(newStatus) newStatus.textContent='All compute nodes are confirmed offline. Master shutdown is now enabled.';
   }catch(err){
     if(statusEl) statusEl.textContent=`Shutdown incomplete: ${err.message}`;
     alert(err.message);
