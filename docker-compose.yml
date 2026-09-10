@@ -28,6 +28,16 @@ services:
     cap_drop:
       - ALL
 
+  master-node-exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: cpu-cluster-master-node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+
   prometheus-hot:
     image: prom/prometheus:v3.14.0
     container_name: cpu-cluster-prometheus-hot
@@ -44,6 +54,7 @@ services:
       - prometheus_hot_data:/prometheus
     depends_on:
       - alertmanager
+      - master-node-exporter
 
   prometheus-archive:
     image: prom/prometheus:v3.14.0
