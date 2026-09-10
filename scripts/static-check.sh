@@ -19,6 +19,35 @@ while IFS= read -r -d '' f; do
   bash -n "$f"
 done < <(find . -type f -name '*.sh' -print0)
 
+echo '== host role separation =='
+for f in scripts/install-master.sh node/install-node.sh node/update-node.sh node/verify-node.sh; do
+  grep -Fq 'ROLE_FILE="$STATE_DIR/role"' "$f" || {
+    echo "[ERROR] host role marker guard missing from $f" >&2
+    exit 1
+  }
+done
+grep -Fq "printf 'master\\n' > \"\$ROLE_FILE\"" scripts/install-master.sh || {
+  echo '[ERROR] master installer must record master role' >&2
+  exit 1
+}
+grep -Fq "printf 'compute\\n' > \"\$ROLE_FILE\"" node/install-node.sh || {
+  echo '[ERROR] compute installer must record compute role' >&2
+  exit 1
+}
+grep -Fq 'this host is a cluster master; refusing compute-node installation' node/install-node.sh || {
+  echo '[ERROR] compute installer must refuse master hosts' >&2
+  exit 1
+}
+grep -Fq 'this host is a cluster master; node/update-node.sh is compute-only' node/update-node.sh || {
+  echo '[ERROR] compute updater must refuse master hosts' >&2
+  exit 1
+}
+grep -Fq 'this host is a cluster master; node/verify-node.sh is compute-only' node/verify-node.sh || {
+  echo '[ERROR] compute verifier must refuse master hosts' >&2
+  exit 1
+}
+echo '[OK] master/compute role guards present'
+
 echo '== CentOS 7 Git compatibility =='
 if grep -R -n --exclude=static-check.sh 'git -C ' scripts node >/tmp/ccm-git-c-usage.$$ 2>/dev/null; then
   cat /tmp/ccm-git-c-usage.$$ >&2
