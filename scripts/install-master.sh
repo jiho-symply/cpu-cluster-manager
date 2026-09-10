@@ -20,8 +20,11 @@ get_cfg() {
 set_cfg() {
   local key="$1" value="$2" tmp
   tmp="$(mktemp)"
-  awk -F= -v k="$key" '$1 != k {print}' "$CONFIG" > "$tmp"
-  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  awk -F= -v k="$key" -v v="$value" '
+    $1 == k { print k "=" v; found=1; next }
+    { print }
+    END { if (!found) print k "=" v }
+  ' "$CONFIG" > "$tmp"
   mv "$tmp" "$CONFIG"
   chmod 600 "$CONFIG"
 }
