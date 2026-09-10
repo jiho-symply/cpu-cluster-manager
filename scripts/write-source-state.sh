@@ -6,18 +6,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE="$ROOT/.cluster-source-state"
 
 command -v git >/dev/null 2>&1 || { echo "[ERROR] git is required on the source host" >&2; exit 1; }
-git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "[ERROR] $ROOT is not a Git checkout" >&2; exit 1; }
+cd "$ROOT"
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "[ERROR] $ROOT is not a Git checkout" >&2; exit 1; }
 
-if ! git -C "$ROOT" diff --quiet || ! git -C "$ROOT" diff --cached --quiet; then
+if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "[ERROR] tracked local changes exist; refusing to stamp an unclean source tree" >&2
-  git -C "$ROOT" status --short >&2
+  git status --short >&2
   exit 2
 fi
 
-COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
-BRANCH="$(git -C "$ROOT" symbolic-ref --short -q HEAD || echo detached)"
-REMOTE="$(git -C "$ROOT" config --get remote.origin.url || echo unknown)"
-RENT_TREE_SHA="$(git -C "$ROOT" rev-parse HEAD:node/rent-image)"
+COMMIT="$(git rev-parse HEAD)"
+BRANCH="$(git symbolic-ref --short -q HEAD || echo detached)"
+REMOTE="$(git config --get remote.origin.url || echo unknown)"
+RENT_TREE_SHA="$(git rev-parse HEAD:node/rent-image)"
 SOURCE_HASH="$(bash "$ROOT/scripts/source-hash.sh")"
 CLUSTER="-"
 if [ -f "$CONFIG" ]; then
