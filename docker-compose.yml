@@ -45,8 +45,15 @@ services:
       - /tmp
     security_opt:
       - no-new-privileges:true
+    # SSH state is intentionally mode 0600 and owned by host ysadmin (UID 1001).
+    # The manager runs as container root but drops all capabilities; restore only
+    # read/search DAC bypass so it can read those two bind-mounted files. This
+    # does not grant DAC write bypass, Docker socket access, or host filesystem
+    # access. Root ownership is retained for the restricted master-control socket.
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_READ_SEARCH
 
   master-node-exporter:
     image: prom/node-exporter:v1.12.1
