@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import secrets
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from .ssh_client import Node, NodeSSH
@@ -16,19 +18,21 @@ APP_DIR = Path(__file__).resolve().parent
 CLUSTER = os.environ.get("CLUSTER", "").strip()
 NODES_SPEC = os.environ.get("NODES", "").strip()
 SSH_USER = os.environ.get("SSH_USER", "ysadmin").strip() or "ysadmin"
-ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
-GRAFANA_BASE_URL = os.environ.get("GRAFANA_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
+GRAFANA_BASE_URL = os.environ.get("GRAFANA_BASE_URL", "/grafana").rstrip("/") or "/grafana"
+SESSION_COOKIE = "ccm_session"
+SESSION_TTL_SECONDS = 12 * 60 * 60
 
 if not CLUSTER:
     raise RuntimeError("CLUSTER must be set")
 if not NODES_SPEC:
     raise RuntimeError("NODES must be set")
-if not ADMIN_USERNAME or not ADMIN_PASSWORD:
-    raise RuntimeError("ADMIN_USERNAME and ADMIN_PASSWORD must be set")
+if not ADMIN_PASSWORD:
+    raise RuntimeError("ADMIN_PASSWORD must be set")
+
+SESSION_KEY = hashlib.sha256(("cpu-cluster-manager:" + ADMIN_PASSWORD).encode()).digest()
 
 app = FastAPI(title="CPU Cluster Manager", docs_url=None, redoc_url=None)
-security = HTTPBasic()
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 
@@ -67,16 +71,32 @@ def parse_nodes(spec: str) -> list[Node]:
 NODES = parse_nodes(NODES_SPEC)
 
 
-def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
-    user_ok = secrets.compare_digest(credentials.username.encode(), ADMIN_USERNAME.encode())
-    password_ok = secrets.compare_digest(credentials.password.encode(), ADMIN_PASSWORD.encode())
-    if not (user_ok and password_ok):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    return credentials.username
+def _session_signature(timestamp: str) -> str:
+    return hmac.new(SESSION_KEY, timestamp.encode(), hashlib.sha256).hexdigest()
+
+
+def issue_session() -> str:
+    timestamp = str(int(time.time()))
+    return f"{timestamp}.{_session_signature(timestamp)}"
+
+
+def session_valid(request: Request) -> bool:
+    token = request.cookies.get(SESSION_COOKIE, "")
+    try:
+        timestamp, signature = token.split(".", 1)
+        issued_at = int(timestamp)
+    except (ValueError, TypeError):
+        return False
+    age = int(time.time()) - issued_at
+    if age < 0 or age > SESSION_TTL_SECONDS:
+        return False
+    return secrets.compare_digest(signature, _session_signature(timestamp))
+
+
+def require_admin(request: Request) -> str:
+    if not session_valid(request):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    return "admin"
 
 
 def get_node(name: str) -> Node:
@@ -105,8 +125,50 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/auth/check")
+def auth_check(request: Request) -> Response:
+    return Response(status_code=204 if session_valid(request) else 401)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    if session_valid(request):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(request=request, name="login.html", context={"cluster": CLUSTER})
+
+
+@app.post("/api/login")
+async def login(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid request") from exc
+    password = str(payload.get("password", ""))
+    if not secrets.compare_digest(password.encode(), ADMIN_PASSWORD.encode()):
+        raise HTTPException(status_code=401, detail="Invalid password")
+    response = JSONResponse({"ok": True})
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=issue_session(),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        samesite="strict",
+        path="/",
+    )
+    return response
+
+
+@app.post("/logout")
+def logout() -> RedirectResponse:
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
+
+
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request, _: str = Depends(require_admin)):
+def index(request: Request):
+    if not session_valid(request):
+        return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse(
         request=request,
         name="index.html",
