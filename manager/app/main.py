@@ -258,6 +258,16 @@ def master_control(action: str) -> str:
         sock.close()
 
 
+def parse_reset_credential(output: str) -> dict[str, str]:
+    credential: dict[str, str] = {}
+    for line in output.splitlines():
+        if line.startswith("[CREDENTIAL] username="):
+            credential["username"] = line.split("=", 1)[1].strip()
+        elif line.startswith("[CREDENTIAL] temporary_password="):
+            credential["password"] = line.split("=", 1)[1].strip()
+    return credential
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -310,14 +320,10 @@ def index(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={
-            "cluster": CLUSTER,
-            "federated": bool(PEER_URL),
-        },
+        context={"cluster": CLUSTER, "federated": bool(PEER_URL)},
     )
 
 
-# Local-only API. Cluster 1 uses these endpoints on Cluster 2 with the peer token.
 @app.get("/api/nodes")
 def api_nodes(_: str = Depends(require_admin)) -> JSONResponse:
     return JSONResponse({"cluster": CLUSTER, "nodes": collect_local_nodes()})
@@ -325,24 +331,26 @@ def api_nodes(_: str = Depends(require_admin)) -> JSONResponse:
 
 @app.post("/api/nodes/{name}/{action}")
 def node_action(name: str, action: str, _: str = Depends(require_admin)) -> JSONResponse:
-    allowed = {"start", "stop", "restart", "recreate", "reset-password", "poweroff"}
+    # Individual host poweroff is intentionally not exposed. Cluster-wide
+    # shutdown still uses the private _shutdown_one()/poweroff path.
+    allowed = {"start", "stop", "restart", "recreate", "reset-password", "reboot"}
     if action not in allowed:
         raise HTTPException(status_code=400, detail=f"Unsupported action: {action}")
 
     node = get_node(name)
     try:
-        if action == "poweroff":
-            result = _shutdown_one(node)
-            if not result.get("ok"):
-                raise HTTPException(status_code=502, detail=str(result.get("detail", "poweroff failed")))
-            return JSONResponse({"ok": True, "node": name, "action": action, "result": result})
         output = NodeSSH(node).action(action)
         _mark_shutdown_confirmed(name, False)
-    except HTTPException:
-        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return JSONResponse({"ok": True, "node": name, "action": action, "output": output})
+
+    payload: dict[str, object] = {"ok": True, "node": name, "action": action, "output": output}
+    if action == "reset-password":
+        credential = parse_reset_credential(output)
+        if not credential.get("username") or not credential.get("password"):
+            raise HTTPException(status_code=502, detail="password reset succeeded but credential output was incomplete")
+        payload["credential"] = credential
+    return JSONResponse(payload)
 
 
 @app.get("/api/nodes/{name}/logs", response_class=PlainTextResponse)
@@ -383,8 +391,6 @@ def api_shutdown_master(_: str = Depends(require_admin)) -> JSONResponse:
     return JSONResponse({"ok": True, "cluster": CLUSTER, "poweroff_requested": True, "output": output})
 
 
-# Browser-facing federated API. On Cluster 1 this includes Cluster 2; on Cluster 2
-# it naturally degrades to the local cluster only.
 @app.get("/api/clusters")
 def api_clusters(_: str = Depends(require_admin)) -> JSONResponse:
     clusters = [local_cluster_payload()]
@@ -422,7 +428,7 @@ def cluster_node_action(cluster: str, name: str, action: str, _: str = Depends(r
         payload = _peer_json(
             f"/api/nodes/{quote(name, safe='')}/{quote(action, safe='')}",
             method="POST",
-            timeout=75 if action == "poweroff" else 45,
+            timeout=45,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
