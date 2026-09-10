@@ -3,6 +3,7 @@ set -euo pipefail
 
 ADMIN_USER="ysadmin"
 STATE_DIR="/var/lib/cpu-cluster-manager"
+ROLE_FILE="$STATE_DIR/role"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SOURCE_STATE="$ROOT/.cluster-source-state"
@@ -12,6 +13,16 @@ PUBKEY_FILE="${1:-$DEFAULT_PUBKEY}"
 if [ "$(id -u)" -ne 0 ]; then
   echo "run with sudo: sudo bash $0 [cluster-manager-public-key-file]" >&2
   exit 1
+fi
+
+EXISTING_ROLE="$(cat "$ROLE_FILE" 2>/dev/null || true)"
+if [ -z "$EXISTING_ROLE" ] && [ -f "$STATE_DIR/deployed-version" ]; then
+  EXISTING_ROLE="$(awk -F= '$1=="role" {print $2; exit}' "$STATE_DIR/deployed-version" 2>/dev/null || true)"
+fi
+if [ "$EXISTING_ROLE" = "master" ] || [ -f "$STATE_DIR/cluster.local.env" ] || docker inspect cpu-cluster-manager >/dev/null 2>&1; then
+  echo "[ERROR] this host is a cluster master; refusing compute-node installation" >&2
+  echo "        use scripts/install-master.sh or scripts/update-master.sh on a master" >&2
+  exit 2
 fi
 
 if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
@@ -126,9 +137,12 @@ METRICS="$(curl -fsS http://127.0.0.1:9100/metrics)" || exit 6
 if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then echo "[ERROR] rent-node monitoring metrics are not available" >&2; exit 6; fi
 
 bash "$ROOT/scripts/write-deploy-state.sh" compute
+printf 'compute\n' > "$ROLE_FILE"
+chmod 0644 "$ROLE_FILE"
 
 echo "[OK] compute-node installation complete"
 echo "[OK] SSH control user: $ADMIN_USER"
 echo "[OK] rent-node state: $CONTAINER_STATE"
 echo "[OK] monitoring: native node_exporter + rent-node metrics on TCP/9100"
+echo "[INFO] host role: compute"
 echo "[INFO] /src/rent/image is managed from the shared Git source and must not be edited locally"
