@@ -31,7 +31,14 @@ The Git checkout intentionally remains under the shared `/home` and contains no 
 /home/ysadmin/cpu-cluster-manager
 ```
 
-The master writes `.cluster-source-state` there with commit, branch, remote, rent-image tree SHA and source SHA256. Compute installers recompute the hash before deployment, so compute hosts do not need Git installed.
+The master writes two generated, Git-ignored, non-secret files there:
+
+```text
+.cluster-source-state    commit/tree/source-hash stamp
+.cluster-manager.pub     manager PUBLIC key only
+```
+
+Compute installers recompute the source SHA256 before deployment, so compute hosts do not need Git installed or a separate repository clone.
 
 ## Private management networks
 
@@ -89,30 +96,22 @@ bash scripts/install-master.sh
 
 If `ADMIN_PASSWORD` is blank, a random password is written to the same mode-600 file.
 
-Legacy pilot state under shared `/home` is migrated automatically. Existing manager key material is copied to host-local storage to preserve compute authorization; shared-home copies are removed only after the new master stack is healthy.
+Legacy pilot state under shared `/home` is migrated automatically. Existing manager key material is copied to host-local storage to preserve compute authorization; shared-home private-key copies are removed only after the new master stack is healthy.
 
 The installer does not replace Docker Engine or modify site firewall/iptables policy. A successful install requires FastAPI/Grafana health checks and stable restart counts for all six master containers.
 
 ## Compute install
 
-The compute consumes the master's shared source checkout. No compute-side Git clone is needed.
+The compute consumes the master's shared source checkout. No compute-side Git clone, Git installation, `scp`, `.env`, JSON or key-file copying is needed.
 
-Master:
-
-```bash
-scp /var/lib/cpu-cluster-manager/ssh/id_ed25519.pub \
-  ysadmin@<COMPUTE_PRIVATE_IP>:/tmp/cluster-manager.pub
-```
-
-Compute:
+On each compute:
 
 ```bash
 cd /home/ysadmin/cpu-cluster-manager
-sudo bash node/install-node.sh /tmp/cluster-manager.pub
-rm -f /tmp/cluster-manager.pub
+sudo bash node/install-node.sh
 ```
 
-Before modifying the node, the installer validates the source stamp and recomputes the source SHA256.
+The installer reads the shared `.cluster-manager.pub`, validates `.cluster-source-state`, recomputes the source SHA256, and then deploys host-local management/runtime files.
 
 The compute installer manages:
 
@@ -145,7 +144,7 @@ cd /home/ysadmin/cpu-cluster-manager
 bash node/update-node.sh
 ```
 
-Compute update does not invoke Git. It validates the shared source stamp/hash and redeploys local management files.
+Compute update does not invoke Git. It validates the shared source stamp/hash and redeploys local management files. The stored `/var/lib/cpu-cluster-manager/manager.pub` may be passed back to the installer safely; this path is explicitly idempotent.
 
 ## Verification
 
@@ -166,6 +165,10 @@ Deployment metadata on both roles:
 ```bash
 cat /var/lib/cpu-cluster-manager/deployed-version
 ```
+
+## Shared `authorized_keys`
+
+Both validated clusters share `/home`, so `ysadmin`'s normal `~/.ssh/authorized_keys` is also shared by the existing infrastructure. The compute installer adds only a forced-command/no-forwarding entry containing the manager public key. The manager private key is never placed under shared `/home`; it remains master-local under `/var/lib/cpu-cluster-manager/ssh`.
 
 ## Monitoring contract
 
