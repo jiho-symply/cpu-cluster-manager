@@ -79,6 +79,7 @@ for c in \
   cpu-cluster-master-node-exporter \
   cpu-cluster-prometheus-hot \
   cpu-cluster-prometheus-archive \
+  cpu-cluster-prometheus-router \
   cpu-cluster-alertmanager \
   cpu-cluster-grafana; do
   state="$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo missing)"
@@ -89,6 +90,14 @@ for c in \
     FAIL=1
   fi
 done
+
+ROUTER_HEALTH="$(docker exec cpu-cluster-prometheus-router python -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/prometheus-auto/healthz", timeout=3).read().decode())' 2>/dev/null || true)"
+if printf '%s' "$ROUTER_HEALTH" | grep -q 'archive_step_seconds.*300'; then
+  echo "[OK] automatic monitoring router: <5m hot / >=5m archive"
+else
+  echo "[FAIL] automatic monitoring router health check" >&2
+  FAIL=1
+fi
 
 if systemctl is-active --quiet cpu-cluster-master-control.socket && [ -S /run/cpu-cluster-manager/master-control.sock ]; then
   echo "[OK] restricted master poweroff socket active"
