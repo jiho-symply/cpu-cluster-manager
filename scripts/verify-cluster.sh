@@ -1,32 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG="${1:-config/nodes.yaml}"
+CONFIG="${1:-cluster.local.env}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+[ -f "$CONFIG" ] || { echo "cluster config not found: $CONFIG" >&2; exit 1; }
 
-[ -f "$CONFIG" ] || { echo "nodes config not found: $CONFIG" >&2; exit 1; }
+get_cfg() {
+  local key="$1"
+  awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$CONFIG"
+}
+NODES_SPEC="$(get_cfg NODES)"
+[ -n "$NODES_SPEC" ] && [ "$NODES_SPEC" != "EDIT_ME" ] || { echo "NODES is not configured" >&2; exit 1; }
 
-KEY="${SSH_KEY_PATH:-$HOME/.ssh/cluster-manager_ed25519}"
-KNOWN_HOSTS="${SSH_KNOWN_HOSTS_PATH:-$HOME/.ssh/cluster-manager_known_hosts}"
+KEY="$HOME/.ssh/cluster-manager_ed25519"
+KNOWN_HOSTS="$HOME/.ssh/cluster-manager_known_hosts"
 [ -f "$KEY" ] || { echo "manager private key not found: $KEY" >&2; exit 2; }
 [ -f "$KNOWN_HOSTS" ] || { echo "manager known_hosts not found: $KNOWN_HOSTS" >&2; exit 2; }
 
-mapfile -t NODES < <(awk '
-  function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); gsub(/^['\''\"]|['\''\"]$/, "", s); return s }
-  function emit() { if (name != "" || host != "") { print name "\t" host "\t" port; name=""; host=""; port=22 } }
-  BEGIN { port=22 }
-  /^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ { emit(); s=$0; sub(/^[^:]*:/,"",s); name=trim(s); next }
-  name != "" && /^[[:space:]]+host:[[:space:]]*/ { s=$0; sub(/^[^:]*:/,"",s); host=trim(s); next }
-  name != "" && /^[[:space:]]+port:[[:space:]]*/ { s=$0; sub(/^[^:]*:/,"",s); port=trim(s); next }
-  END { emit() }
-' "$CONFIG")
-
+IFS=',' read -r -a ENTRIES <<< "$NODES_SPEC"
 FAIL=0
-for row in "${NODES[@]}"; do
-  IFS=$'\t' read -r name host port <<<"$row"
+for entry in "${ENTRIES[@]}"; do
+  name="${entry%%@*}"
+  host="${entry#*@}"
   echo "=== $name ($host) ==="
-  if ! ssh -T -i "$KEY" -p "$port" \
+
+  if ! ssh -T -i "$KEY" -p 22 \
       -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=5 \
       -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
       "ysadmin@$host" summary; then
