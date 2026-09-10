@@ -57,16 +57,7 @@ printf '%s %s %s %s\n' \
   "$KEY_TYPE" "$KEY_DATA" 'cpu-cluster-manager' >> "$TMP_AUTH"
 install -m 0600 -o "$ADMIN_USER" -g "$ADMIN_GROUP" "$TMP_AUTH" "$AUTHORIZED_KEYS"
 
-cat > /etc/sudoers.d/cpu-cluster-manager <<SUDOERS
-$ADMIN_USER ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin summary
-$ADMIN_USER ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin start
-$ADMIN_USER ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin stop
-$ADMIN_USER ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin restart
-$ADMIN_USER ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin recreate
-$ADMIN_USER ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin reset-password
-$ADMIN_USER ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin logs
-SUDOERS
-chmod 0440 /etc/sudoers.d/cpu-cluster-manager
+install -m 0440 "$SCRIPT_DIR/sudoers/cpu-cluster-manager" /etc/sudoers.d/cpu-cluster-manager
 visudo -cf /etc/sudoers.d/cpu-cluster-manager >/dev/null
 rm -f /etc/sudoers.d/cluster-ui
 
