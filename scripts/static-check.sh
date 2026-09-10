@@ -45,12 +45,16 @@ if grep -R -n --exclude=static-check.sh 'git -C ' scripts node master >/tmp/ccm-
   fail 'runtime scripts must not use git -C; CentOS 7 Git 1.8.x may not support it'
 fi
 rm -f /tmp/ccm-git-c-usage.$$
-# systemd 219 compatibility: master-control installation must not rely on
-# "systemctl enable --now".
 if grep -Fq 'enable --now cpu-cluster-master-control.socket' scripts/install-master.sh; then
   fail 'master control socket install must remain compatible with systemd 219'
 fi
 echo '[OK] CentOS 7 runtime compatibility guards'
+
+
+echo '== SSH host-key policy =='
+grep -Fq "grep -q ' ssh-ed25519 '" scripts/prepare-master-ssh.sh || fail 'manager known_hosts must verify an ED25519 key exists for each compute'
+grep -Fq 'ssh-keyscan -T 5 -p 22 -H -t ed25519' scripts/prepare-master-ssh.sh || fail 'missing ED25519 host keys must be scanned explicitly'
+echo '[OK] compute ED25519 host-key coverage enforced'
 
 
 echo '== rent image APT policy =='
@@ -71,6 +75,37 @@ grep -Fq 'native node_exporter already installed' node/install-monitoring.sh || 
 grep -Fq '"$NODE_EXPORTER_BIN" --version' node/install-monitoring.sh || fail 'node_exporter reuse must verify the installed version'
 grep -Fq 'NE_SHA256=' node/install-monitoring.sh || fail 'new node_exporter downloads must retain checksum verification'
 echo '[OK] node_exporter download is first-install/version-change only'
+
+
+echo '== five-second hot monitoring =='
+grep -Eq '^  scrape_interval: 5s$|^  scrape_interval: 5s' monitoring/prometheus/prometheus.yml || fail 'Hot Prometheus scrape interval must be 5s'
+grep -Fq 'scrape_timeout: 4s' monitoring/prometheus/prometheus.yml || fail 'Hot Prometheus scrape timeout must remain below the 5s interval'
+grep -Fq '  - name: cluster-live' monitoring/prometheus/rules/recording.yml || fail 'live recording group missing'
+grep -A2 -F '  - name: cluster-live' monitoring/prometheus/rules/recording.yml | grep -Fq 'interval: 5s' || fail 'live recording rules must evaluate every 5s'
+grep -Fq 'irate(node_cpu_seconds_total{mode="idle"}[30s])' monitoring/prometheus/rules/recording.yml || fail 'host CPU must use near-real-time irate for 5s monitoring'
+grep -Fq 'OnUnitActiveSec=5s' node/systemd/rent-node-metrics.timer || fail 'rent-node Docker metrics timer must run every 5s'
+grep -Fq 'AccuracySec=1s' node/systemd/rent-node-metrics.timer || fail 'rent-node 5s timer accuracy must be 1s'
+grep -Fq 'systemctl restart rent-node-metrics.timer' node/install-monitoring.sh || fail 'existing compute timers must restart to adopt the 5s cadence'
+echo '[OK] real 5s host + rent-node collection pipeline'
+
+
+echo '== automatic hot/archive routing =='
+grep -Fq 'ARCHIVE_STEP_SECONDS = 300.0' manager/app/prometheus_router.py || fail 'auto router threshold must be exactly 5m'
+grep -Fq 'archive_node_cpu_utilization_ratio_avg5m' manager/app/prometheus_router.py || fail 'auto router must map canonical CPU metric to archive average'
+grep -Fq 'archive_rent_cpu_cores_avg5m' manager/app/prometheus_router.py || fail 'auto router must map rent CPU metric to archive average'
+grep -Fq 'prometheus-router:' docker-compose.yml || fail 'internal Prometheus router service missing'
+grep -Fq 'cpu-cluster-prometheus-router' docker-compose.yml || fail 'Prometheus router container name missing'
+grep -Fq 'url: http://prometheus-router:8080/prometheus-auto' monitoring/grafana/provisioning/datasources/datasources.yml || fail 'Grafana auto datasource must use the internal router'
+grep -Fq 'timeInterval: 5s' monitoring/grafana/provisioning/datasources/datasources.yml || fail 'Grafana auto datasource minimum interval must be 5s'
+[ -f monitoring/grafana/dashboards/cluster-monitoring.json ] || fail 'unified monitoring dashboard missing'
+[ ! -e monitoring/grafana/dashboards/cluster-recent.json ] || fail 'split Recent dashboard must be removed'
+[ ! -e monitoring/grafana/dashboards/cluster-archive.json ] || fail 'split History dashboard must be removed'
+grep -Fq '"uid": "cluster-monitoring"' monitoring/grafana/dashboards/cluster-monitoring.json || fail 'unified dashboard UID mismatch'
+grep -Fq '"uid": "prometheus-auto"' monitoring/grafana/dashboards/cluster-monitoring.json || fail 'unified dashboard must use Prometheus Auto'
+grep -Fq '"5s"' monitoring/grafana/dashboards/cluster-monitoring.json || fail 'Grafana refresh picker must expose 5s'
+grep -Fq 'Auto resolution: <5m Hot / ≥5m Archive' manager/app/templates/index.html || fail 'UI must explain automatic resolution policy'
+if grep -Fq 'data-monitor-kind=' manager/app/templates/index.html; then fail 'Monitoring UI must not expose separate Recent/History modes'; fi
+echo '[OK] one dashboard automatically selects Hot (<5m) or Archive (>=5m)'
 
 
 echo '== fixed password and federation policy =='
@@ -113,9 +148,7 @@ grep -Fq 'location /cluster2/grafana/' gateway/nginx-cluster1.conf || fail 'Clus
 grep -Fq 'proxy_set_header X-CCM-Peer-Token clustermanager;' gateway/nginx-cluster1.conf || fail 'Cluster 1 peer Grafana authentication missing'
 grep -Fq -- '- "${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}:8080"' docker-compose.yml || fail 'gateway must be exposed only through UI_HOST:UI_PORT'
 grep -Fq -- '- ./gateway/nginx-${CLUSTER}.conf:/etc/nginx/nginx.conf:ro' docker-compose.yml || fail 'gateway config path must use legacy-Compose-safe simple CLUSTER interpolation'
-if grep -Fq './gateway/nginx-${CLUSTER:?' docker-compose.yml; then
-  fail 'gateway volume path must not use :? interpolation; Compose 2.6 mis-parses it on CentOS 7'
-fi
+if grep -Fq './gateway/nginx-${CLUSTER:?' docker-compose.yml; then fail 'gateway volume path must not use :? interpolation; Compose 2.6 mis-parses it on CentOS 7'; fi
 grep -Fq -- '- "127.0.0.1:${GRAFANA_PORT:-3000}:3000"' docker-compose.yml || fail 'Grafana diagnostic port must remain loopback-only'
 grep -Fq 'GF_SERVER_ROOT_URL: http://${UI_HOST}:${UI_PORT:-8080}/${CLUSTER}/grafana/' docker-compose.yml || fail 'Grafana root URL must use legacy-Compose-safe cluster-specific path'
 grep -Fq '/run/cpu-cluster-manager/master-control.sock:/run/master-control.sock' docker-compose.yml || fail 'restricted master control socket is not mounted into manager'
@@ -130,7 +163,9 @@ echo '== Grafana dashboard JSON =='
 python3 - <<'PY'
 import json
 from pathlib import Path
-for path in Path('monitoring/grafana/dashboards').glob('*.json'):
+paths = list(Path('monitoring/grafana/dashboards').glob('*.json'))
+assert [p.name for p in paths] == ['cluster-monitoring.json'], [p.name for p in paths]
+for path in paths:
     json.loads(path.read_text())
     print(f'[OK] {path}')
 PY
