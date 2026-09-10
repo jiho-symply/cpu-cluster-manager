@@ -3,21 +3,23 @@ set -euo pipefail
 
 ADMIN_USER="ysadmin"
 STATE_DIR="/var/lib/cpu-cluster-manager"
-
-if [ "$(id -u)" -ne 0 ]; then
-  echo "run with sudo: sudo bash $0 <cluster-manager-public-key-file>" >&2
-  exit 1
-fi
-
-PUBKEY_FILE="${1:-}"
-if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
-  echo "usage: sudo bash $0 <cluster-manager-public-key-file>" >&2
-  exit 2
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SOURCE_STATE="$ROOT/.cluster-source-state"
+DEFAULT_PUBKEY="$ROOT/.cluster-manager.pub"
+PUBKEY_FILE="${1:-$DEFAULT_PUBKEY}"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "run with sudo: sudo bash $0 [cluster-manager-public-key-file]" >&2
+  exit 1
+fi
+
+if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
+  echo "[ERROR] manager public key not found: $PUBKEY_FILE" >&2
+  echo "        run the master installer first; it publishes $DEFAULT_PUBKEY on the shared source" >&2
+  exit 2
+fi
+
 bash "$ROOT/scripts/preflight.sh" compute
 
 [ -f "$SOURCE_STATE" ] || {
@@ -70,7 +72,13 @@ trap - EXIT
 
 install -m 0755 "$SCRIPT_DIR/cluster-node-admin" /usr/local/sbin/cluster-node-admin
 install -m 0755 "$SCRIPT_DIR/cluster-node-ssh" /usr/local/bin/cluster-node-ssh
-install -m 0644 "$PUBKEY_FILE" "$STATE_DIR/manager.pub"
+MANAGER_PUB="$STATE_DIR/manager.pub"
+if [ -e "$MANAGER_PUB" ] && [ "$PUBKEY_FILE" -ef "$MANAGER_PUB" ]; then
+  chmod 0644 "$MANAGER_PUB"
+  echo "[KEEP] manager public key already stored: $MANAGER_PUB"
+else
+  install -m 0644 "$PUBKEY_FILE" "$MANAGER_PUB"
+fi
 
 SSH_DIR="$ADMIN_HOME/.ssh"
 AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
