@@ -19,6 +19,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 bash "$ROOT/scripts/preflight.sh" compute
 
+repo_git() {
+  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    sudo -u "$SUDO_USER" git -C "$ROOT" "$@"
+  else
+    git -C "$ROOT" "$@"
+  fi
+}
+
 ADMIN_HOME="$(getent passwd "$ADMIN_USER" | awk -F: '{print $6}')"
 ADMIN_GROUP="$(id -gn "$ADMIN_USER")"
 [ -n "$ADMIN_HOME" ] && [ -d "$ADMIN_HOME" ] || { echo "cannot determine home directory for $ADMIN_USER" >&2; exit 3; }
@@ -30,7 +38,7 @@ case "$KEY_TYPE" in
   *) echo "unsupported SSH public key type: $KEY_TYPE" >&2; exit 4 ;;
 esac
 
-RENT_TREE_SHA="$(git -C "$ROOT" rev-parse HEAD:node/rent-image 2>/dev/null || echo unknown)"
+RENT_TREE_SHA="$(repo_git rev-parse HEAD:node/rent-image 2>/dev/null || echo unknown)"
 
 # /src/rent/image is a deployed copy only. Runtime data directories are untouched.
 install -d -m 0755 /src/rent "$STATE_DIR"
