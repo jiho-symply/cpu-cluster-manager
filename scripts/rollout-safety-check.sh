@@ -41,4 +41,15 @@ grep -Fq 'bash "$ROOT/scripts/ensure-compute-docker.sh"' node/install-node.sh ||
 grep -Fq 'MIN_DOCKER_VERSION="20.10.10"' scripts/preflight.sh || fail "runtime baseline must include clone3-compatible Docker"
 grep -Fq 'MIN_DOCKER_API="1.41"' scripts/preflight.sh || fail "runtime API baseline must be 1.41"
 
-echo '[OK] rollout credential transport + complete legacy Docker repair guards'
+# Shared /home is NFS-backed on computes. Never start a partial rollout while a
+# client still has a stale view immediately after the master updates the tree.
+grep -Fq '[3b/7] Waiting for shared source view to converge on every compute' scripts/rollout-all-computes.sh || fail "bulk rollout must preflight NFS source convergence"
+grep -Fq 'SOURCE_VIEW_RETRIES=15' scripts/rollout-all-computes.sh || fail "bulk rollout source convergence retry window missing"
+grep -Fq 'no compute installation started' scripts/rollout-all-computes.sh || fail "source convergence failure must occur before compute installation"
+grep -Fq 'SOURCE_HASH_RETRIES=15' node/install-node.sh || fail "compute installer must tolerate transient NFS source cache"
+grep -Fq 'after NFS cache convergence window; refusing deployment' node/install-node.sh || fail "compute installer must retain source integrity failure after retries"
+if grep -Eq 'drop_caches|write-source-state\.sh' node/install-node.sh; then
+  fail "compute installer must not flush system caches or restamp source to bypass integrity checks"
+fi
+
+echo '[OK] rollout credential transport + Docker repair + NFS source convergence guards'
