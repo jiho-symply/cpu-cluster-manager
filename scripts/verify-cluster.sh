@@ -17,7 +17,11 @@ get_source() {
   awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$SOURCE_STATE"
 }
 NODES_SPEC="$(get_cfg NODES)"
+UI_HOST="$(get_cfg UI_HOST)"
+UI_PORT="$(get_cfg UI_PORT)"
+UI_PORT="${UI_PORT:-8080}"
 [ -n "$NODES_SPEC" ] && [ "$NODES_SPEC" != "EDIT_ME" ] || { echo "NODES is not configured" >&2; exit 1; }
+[ -n "$UI_HOST" ] && [ "$UI_HOST" != "AUTODETECT" ] || { echo "UI_HOST is not configured" >&2; exit 1; }
 
 KEY="/var/lib/cpu-cluster-manager/ssh/id_ed25519"
 KNOWN_HOSTS="/var/lib/cpu-cluster-manager/ssh/known_hosts"
@@ -67,6 +71,7 @@ for entry in "${ENTRIES[@]}"; do
 done
 
 for c in \
+  cpu-cluster-gateway \
   cpu-cluster-manager \
   cpu-cluster-master-node-exporter \
   cpu-cluster-prometheus-hot \
@@ -81,6 +86,21 @@ for c in \
     FAIL=1
   fi
 done
+
+if curl -fsS --connect-timeout 5 "http://${UI_HOST}:${UI_PORT}/healthz" >/dev/null; then
+  echo "[OK] unified management endpoint: http://${UI_HOST}:${UI_PORT}"
+else
+  echo "[FAIL] unified management endpoint: http://${UI_HOST}:${UI_PORT}" >&2
+  FAIL=1
+fi
+
+GRAFANA_GATE_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 "http://${UI_HOST}:${UI_PORT}/grafana/api/health" || true)"
+if [ "$GRAFANA_GATE_STATUS" = "302" ]; then
+  echo "[OK] embedded Grafana is protected by management login"
+else
+  echo "[FAIL] Grafana auth gate returned HTTP ${GRAFANA_GATE_STATUS:--}, expected 302" >&2
+  FAIL=1
+fi
 
 TARGET_FILE="monitoring/targets/node-exporter.json"
 if [ -f "$TARGET_FILE" ] && grep -q 'master-node-exporter:9100' "$TARGET_FILE"; then
