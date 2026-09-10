@@ -34,7 +34,6 @@ while IFS= read -r raw || [ -n "$raw" ]; do
 done < "$INVENTORY"
 [ "${#ENTRIES[@]}" -gt 0 ] || fail "empty inventory: $INVENTORY"
 NODES_CSV="$(IFS=,; echo "${ENTRIES[*]}")"
-
 EXPECTED_COUNT=6
 [ "${#ENTRIES[@]}" -eq "$EXPECTED_COUNT" ] || fail "$CLUSTER inventory must contain $EXPECTED_COUNT computes, found ${#ENTRIES[@]}"
 
@@ -44,14 +43,29 @@ echo "=================================================="
 printf '  %s\n' "${ENTRIES[@]}"
 echo
 
-echo "[1/7] Preparing current master/source state"
+echo "[1/8] Preparing current master/source state"
 bash "$ROOT/scripts/install-master.sh" "$CONFIG"
 bash "$ROOT/scripts/verify-manager-ssh.sh" "$CONFIG"
+
+SOURCE_STATE="$ROOT/.cluster-source-state"
+DEPLOY_COMMIT="$(awk -F= '$1=="commit" {print $2; exit}' "$SOURCE_STATE")"
+STAMPED_SOURCE_HASH="$(awk -F= '$1=="source_hash" {print $2; exit}' "$SOURCE_STATE")"
+[[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid source commit stamp"
+[[ "$STAMPED_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || fail "invalid source hash stamp"
+
+echo "[2/8] Building immutable release bundle"
+bash "$ROOT/scripts/build-release-bundle.sh"
+BUNDLE_PATH="$STATE_DIR/releases/ccm-${DEPLOY_COMMIT}.tar"
+[ -f "$BUNDLE_PATH" ] || fail "release bundle missing after build: $BUNDLE_PATH"
+BUNDLE_SHA256="$(sha256sum "$BUNDLE_PATH" | awk '{print $1}')"
+[[ "$BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail "invalid release bundle sha256"
+echo "[OK] release transport artifact: $(basename "$BUNDLE_PATH") (${BUNDLE_SHA256:0:12})"
 
 BOOT_DIR="$(mktemp -d /tmp/ccm-rollout.XXXXXX)"
 BOOT_KEY="$BOOT_DIR/bootstrap_ed25519"
 BOOT_KNOWN_HOSTS="$BOOT_DIR/known_hosts"
-MARKER="ccm-bootstrap-${CLUSTER}-$$-$(date +%s)"
+RUN_TOKEN="${CLUSTER}-$$-$(date +%s)"
+MARKER="ccm-bootstrap-${RUN_TOKEN}"
 AUTH_DIR="$HOME/.ssh"
 AUTHORIZED_KEYS="$AUTH_DIR/authorized_keys"
 BOOTSTRAP_ACTIVE=0
@@ -88,8 +102,17 @@ ssh_common=(
   -o StrictHostKeyChecking=yes
   -o UserKnownHostsFile="$BOOT_KNOWN_HOSTS"
 )
+scp_common=(
+  -q
+  -i "$BOOT_KEY"
+  -o BatchMode=yes
+  -o IdentitiesOnly=yes
+  -o ConnectTimeout=4
+  -o StrictHostKeyChecking=yes
+  -o UserKnownHostsFile="$BOOT_KNOWN_HOSTS"
+)
 
-echo "[2/7] Scanning SSH host keys"
+echo "[3/8] Scanning SSH host keys"
 : > "$BOOT_KNOWN_HOSTS"
 for entry in "${ENTRIES[@]}"; do
   host="${entry#*@}"
@@ -99,7 +122,7 @@ for entry in "${ENTRIES[@]}"; do
 done
 chmod 0600 "$BOOT_KNOWN_HOSTS"
 
-echo "[3/7] Verifying hostname <-> private-IP inventory before installation"
+echo "[4/8] Verifying hostname <-> private-IP inventory"
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
   host="${entry#*@}"
@@ -108,35 +131,7 @@ for entry in "${ENTRIES[@]}"; do
   echo "[OK] $name = $host"
 done
 
-# Compute /home is NFS-backed. A master-side git pull can be visible to clients
-# at slightly different times because of NFS attribute/data caching. Confirm
-# every compute sees the exact stamped source before changing any compute.
-STAMPED_SOURCE_HASH="$(awk -F= '$1=="source_hash" {print $2; exit}' "$ROOT/.cluster-source-state")"
-[[ "$STAMPED_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || fail "invalid source hash stamp before compute rollout"
-SOURCE_VIEW_RETRIES=15
-SOURCE_VIEW_RETRY_SECONDS=5
-echo "[3b/7] Waiting for shared source view to converge on every compute"
-for entry in "${ENTRIES[@]}"; do
-  name="${entry%%@*}"
-  host="${entry#*@}"
-  remote_hash=""
-  for ((attempt=1; attempt<=SOURCE_VIEW_RETRIES; attempt++)); do
-    remote_hash="$(ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "cd '$ROOT' && bash scripts/source-hash.sh" 2>/dev/null || true)"
-    if [ "$remote_hash" = "$STAMPED_SOURCE_HASH" ]; then
-      break
-    fi
-    if [ "$attempt" -lt "$SOURCE_VIEW_RETRIES" ]; then
-      [ "$attempt" -ne 1 ] || echo "[WAIT] $name source view has not converged yet; retrying for up to $(( (SOURCE_VIEW_RETRIES - 1) * SOURCE_VIEW_RETRY_SECONDS ))s"
-      sleep "$SOURCE_VIEW_RETRY_SECONDS"
-    fi
-  done
-  if [ "$remote_hash" != "$STAMPED_SOURCE_HASH" ]; then
-    fail "shared source view did not converge on $name ($host): stamped=$STAMPED_SOURCE_HASH current=${remote_hash:--}; no compute installation started"
-  fi
-  echo "[OK] $name source view = ${STAMPED_SOURCE_HASH:0:12}"
-done
-
-echo "[4/7] Preflighting sudo on every compute"
+echo "[5/8] Preflighting sudo on every compute"
 NEED_PASSWORD=0
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
@@ -157,9 +152,6 @@ if [ "$NEED_PASSWORD" -eq 1 ]; then
   [ -n "$SUDO_PASS" ] || fail "empty sudo password"
 fi
 
-# Never allocate a pseudo-TTY while piping a password to sudo. A PTY can echo
-# stdin before sudo disables terminal echo, leaking the password into rollout
-# logs. sudo -S works over the non-PTY SSH channel on the validated hosts.
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
   host="${entry#*@}"
@@ -174,24 +166,43 @@ done
 echo "[OK] sudo preflight passed on all ${#ENTRIES[@]} computes"
 
 run_remote_install() {
-  local entry="$1" name host log rc
+  local entry="$1" name host log rc remote_bundle remote_root
   name="${entry%%@*}"
   host="${entry#*@}"
   log="$BOOT_DIR/${name}.log"
+  remote_bundle="/tmp/ccm-release-${RUN_TOKEN}.tar"
+  remote_root="/tmp/ccm-release-${RUN_TOKEN}"
 
   echo "[INSTALL] $name ($host)"
+  : > "$log"
   set +e
-  if ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
-    ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
-      "cd '$ROOT' && sudo -n bash node/install-node.sh '$ROOT/.cluster-manager.pub' && bash node/verify-node.sh" \
-      >"$log" 2>&1
-    rc=$?
-  else
-    printf '%s\n' "$SUDO_PASS" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
-      "cd '$ROOT' && sudo -S -p '' bash node/install-node.sh '$ROOT/.cluster-manager.pub' && bash node/verify-node.sh" \
-      >"$log" 2>&1
+
+  ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "rm -rf '$remote_root' '$remote_bundle' && mkdir -m 700 '$remote_root'" >>"$log" 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    scp "${scp_common[@]}" "$BUNDLE_PATH" "$ADMIN_USER@$host:$remote_bundle" >>"$log" 2>&1
     rc=$?
   fi
+  if [ "$rc" -eq 0 ]; then
+    ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "set -e; actual=\$(sha256sum '$remote_bundle' | awk '{print \$1}'); [ \"\$actual\" = '$BUNDLE_SHA256' ] || { echo '[ERROR] transported release bundle checksum mismatch' >&2; exit 20; }; tar -xf '$remote_bundle' -C '$remote_root'; actual_source=\$(cd '$remote_root' && bash scripts/source-hash.sh); [ \"\$actual_source\" = '$STAMPED_SOURCE_HASH' ] || { echo '[ERROR] extracted release source hash mismatch' >&2; exit 21; }; actual_commit=\$(awk -F= '\$1==\"commit\" {print \$2; exit}' '$remote_root/.cluster-source-state'); [ \"\$actual_commit\" = '$DEPLOY_COMMIT' ] || { echo '[ERROR] extracted release commit mismatch' >&2; exit 22; }; echo '[OK] immutable release verified locally'" >>"$log" 2>&1
+    rc=$?
+  fi
+
+  if [ "$rc" -eq 0 ]; then
+    if ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
+      ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
+        "sudo -n bash '$remote_root/node/install-node.sh' '$remote_root/.cluster-manager.pub' && bash '$remote_root/node/verify-node.sh'" \
+        >>"$log" 2>&1
+      rc=$?
+    else
+      printf '%s\n' "$SUDO_PASS" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
+        "sudo -S -p '' bash '$remote_root/node/install-node.sh' '$remote_root/.cluster-manager.pub' && bash '$remote_root/node/verify-node.sh'" \
+        >>"$log" 2>&1
+      rc=$?
+    fi
+  fi
+
+  ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "rm -rf '$remote_root' '$remote_bundle'" >>"$log" 2>&1 || true
   set -e
 
   if [ "$rc" -ne 0 ]; then
@@ -199,14 +210,15 @@ run_remote_install() {
     cat "$log" >&2
     return "$rc"
   fi
-  echo "[OK] $name installed and verified"
+  echo "[OK] $name installed and verified from immutable release"
   grep -E '^\[CREDENTIAL\]' "$log" || true
 }
 
-# /home/ysadmin is shared inside each cluster. node/install-node.sh updates the
-# shared authorized_keys file, so compute installs are intentionally serialized
-# to avoid concurrent writers on the same NFS-backed file.
-echo "[5/7] Installing/updating all computes sequentially"
+# Compute installs remain serialized because every node updates the same
+# NFS-backed /home/ysadmin/authorized_keys file. Deployment source itself is
+# no longer executed from NFS: one immutable tar is copied over SSH, verified,
+# extracted to local /tmp, and executed only from that local snapshot.
+echo "[6/8] Installing/updating all computes sequentially"
 for entry in "${ENTRIES[@]}"; do
   run_remote_install "$entry" || fail "compute rollout failed; master NODES was not expanded"
 done
@@ -214,7 +226,7 @@ done
 cleanup_bootstrap
 trap - EXIT INT TERM
 
-echo "[6/7] Expanding master NODES to the full validated inventory"
+echo "[7/8] Expanding master NODES to the full validated inventory"
 BACKUP="$CONFIG.pre-full-rollout-$(date +%Y%m%d-%H%M%S)"
 cp -p "$CONFIG" "$BACKUP"
 tmp_cfg="$(mktemp "$STATE_DIR/.cluster.local.env.XXXXXX")"
@@ -231,7 +243,7 @@ echo "[BACKUP] previous config: $BACKUP"
 bash "$ROOT/scripts/install-master.sh" "$CONFIG"
 bash "$ROOT/scripts/verify-manager-ssh.sh" "$CONFIG"
 
-echo "[7/7] End-to-end verification"
+echo "[8/8] End-to-end verification"
 bash "$ROOT/scripts/verify-cluster.sh" "$CONFIG"
 
 echo
