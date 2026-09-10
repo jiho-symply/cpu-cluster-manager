@@ -5,8 +5,7 @@ CONFIG="${1:-/var/lib/cpu-cluster-manager/cluster.local.env}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE="$ROOT/.cluster-source-state"
 
-[ "$(id -un)" = "ysadmin" ] || { echo "[ERROR] run as ysadmin" >&2; exit 1; }
-command -v git >/dev/null 2>&1 || { echo "[ERROR] git is required on master" >&2; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "[ERROR] git is required on the source host" >&2; exit 1; }
 git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "[ERROR] $ROOT is not a Git checkout" >&2; exit 1; }
 
 if ! git -C "$ROOT" diff --quiet || ! git -C "$ROOT" diff --cached --quiet; then
