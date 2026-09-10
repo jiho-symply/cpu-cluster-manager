@@ -121,6 +121,8 @@ grep -Fq 'location /grafana/' gateway/nginx.conf || {
   exit 1
 }
 docker run --rm \
+  --add-host cluster-manager:127.0.0.1 \
+  --add-host grafana:127.0.0.1 \
   -v "$PWD/gateway/nginx.conf:/etc/nginx/nginx.conf:ro" \
   nginx:1.27-alpine nginx -t >/dev/null
 echo '[OK] password-only unified Control/Monitoring gateway configuration'
