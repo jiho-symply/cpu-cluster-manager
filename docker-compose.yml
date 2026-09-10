@@ -5,19 +5,19 @@ services:
     container_name: cpu-cluster-manager
     restart: unless-stopped
     environment:
-      CLUSTER: ${CLUSTER:?set CLUSTER in cluster.local.env}
-      NODES: ${NODES:?set NODES in cluster.local.env}
+      CLUSTER: ${CLUSTER:?set CLUSTER in host-local cluster config}
+      NODES: ${NODES:?set NODES in host-local cluster config}
       SSH_USER: ysadmin
-      ADMIN_USERNAME: ${ADMIN_USERNAME:?set ADMIN_USERNAME in cluster.local.env}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in cluster.local.env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set ADMIN_USERNAME in host-local cluster config}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in host-local cluster config}
       SSH_KEY: /run/ssh/id_ed25519
       SSH_KNOWN_HOSTS: /run/ssh/known_hosts
       GRAFANA_BASE_URL: http://127.0.0.1:${GRAFANA_PORT:-3000}
     ports:
       - "127.0.0.1:${UI_PORT:-8080}:8080"
     volumes:
-      - /home/ysadmin/.ssh/cluster-manager_ed25519:/run/ssh/id_ed25519:ro
-      - /home/ysadmin/.ssh/cluster-manager_known_hosts:/run/ssh/known_hosts:ro
+      - /var/lib/cpu-cluster-manager/ssh/id_ed25519:/run/ssh/id_ed25519:ro
+      - /var/lib/cpu-cluster-manager/ssh/known_hosts:/run/ssh/known_hosts:ro
     read_only: true
     tmpfs:
       - /tmp
@@ -86,8 +86,8 @@ services:
     container_name: cpu-cluster-grafana
     restart: unless-stopped
     environment:
-      GF_SECURITY_ADMIN_USER: ${ADMIN_USERNAME:?set ADMIN_USERNAME in cluster.local.env}
-      GF_SECURITY_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in cluster.local.env}
+      GF_SECURITY_ADMIN_USER: ${ADMIN_USERNAME:?set ADMIN_USERNAME in host-local cluster config}
+      GF_SECURITY_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in host-local cluster config}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/cluster-recent.json
