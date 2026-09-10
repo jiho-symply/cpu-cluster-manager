@@ -46,13 +46,13 @@ DOCKER_API="$(docker version --format '{{.Server.APIVersion}}' 2>/dev/null || tr
 say "Docker Engine" "${DOCKER_VERSION:-unknown}"
 say "Docker API" "${DOCKER_API:-unknown}"
 if [ -n "$DOCKER_API" ] && ! version_ge "$DOCKER_API" "$MIN_DOCKER_API"; then
-  warn "Docker API $DOCKER_API is older than the compatibility baseline $MIN_DOCKER_API. The installer will continue, but image/build compatibility must be validated on this host."
+  fail "Docker API $DOCKER_API is older than required baseline $MIN_DOCKER_API"
 fi
 
 CGROUP_FS="$(stat -fc %T /sys/fs/cgroup 2>/dev/null || echo unknown)"
 case "$CGROUP_FS" in
   cgroup2fs) CGROUP_MODE="v2" ;;
-  tmpfs) CGROUP_MODE="v1" ;;
+  tmpfs) CGROUP_MODE="v1/hybrid" ;;
   *) CGROUP_MODE="$CGROUP_FS" ;;
 esac
 say "cgroup" "$CGROUP_MODE"
@@ -66,19 +66,14 @@ say "SELinux" "$SELINUX"
 if [ "$PLATFORM" = "centos7" ]; then
   KERNEL="$(uname -r)"
   if [[ "$KERNEL" =~ ^3\.10\.0-([0-9]+) ]] && [ "${BASH_REMATCH[1]}" -lt 366 ]; then
-    warn "CentOS/RHEL 7 kernel $KERNEL is older than 3.10.0-366; upgrade before relying on container monitoring."
+    fail "CentOS/RHEL 7 kernel $KERNEL is older than the validated baseline 3.10.0-366"
   fi
 fi
 
 if [ "$ROLE" = "master" ] || [ "$ROLE" = "all" ]; then
   need_cmds curl ssh-keygen ssh-keyscan
-  if docker compose version >/dev/null 2>&1; then
-    say "Compose" "$(docker compose version --short 2>/dev/null || docker compose version)"
-  elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
-    say "Compose" "$(docker-compose version --short 2>/dev/null || docker-compose version)"
-  else
-    say "Compose" "not installed; scripts/compose.sh will use docker/compose:1.29.2 fallback"
-  fi
+  docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 plugin is required on master"
+  say "Compose" "$(docker compose version --short 2>/dev/null || docker compose version)"
 fi
 
 if [ "$ROLE" = "compute" ] || [ "$ROLE" = "all" ]; then
@@ -88,9 +83,9 @@ if [ "$ROLE" = "compute" ] || [ "$ROLE" = "all" ]; then
 fi
 
 if [ "$PLATFORM" = "ubuntu20" ]; then
-  warn "Ubuntu 20.04 is outside Docker's current package-support list. This project reuses the existing Docker Engine and does not replace it."
+  warn "Ubuntu 20.04 is outside Docker's current package-support list; the validated existing Docker Engine is reused."
 else
-  warn "CentOS 7 is EOL and current Docker CE packages no longer support it. This project reuses the existing Docker Engine and does not replace it."
+  warn "CentOS 7 is EOL; the validated existing Docker Engine/kernel are reused and not replaced."
 fi
 
 echo "[OK] preflight completed"
