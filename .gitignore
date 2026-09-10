@@ -1,3 +1,4 @@
+cluster.local.env
 .env
 config/nodes.yaml
 secrets/
