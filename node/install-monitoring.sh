@@ -43,47 +43,10 @@ install -m 0755 "$TMP/node_exporter-${NODE_EXPORTER_VERSION}.linux-${NE_ARCH}/no
 install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$TEXTFILE_DIR"
 install -m 0755 "$SCRIPT_DIR/rent-node-metrics.sh" "$INSTALL_DIR/rent-node-metrics"
 
-cat > /etc/systemd/system/node-exporter.service <<EOF
-[Unit]
-Description=Prometheus Node Exporter
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=$SERVICE_USER
-Group=$SERVICE_USER
-ExecStart=$INSTALL_DIR/node_exporter --collector.textfile.directory=$TEXTFILE_DIR
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat > /etc/systemd/system/rent-node-metrics.service <<EOF
-[Unit]
-Description=Write rent-node Docker metrics for node_exporter
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=$INSTALL_DIR/rent-node-metrics $TEXTFILE_DIR/rent-node.prom
-EOF
-
-cat > /etc/systemd/system/rent-node-metrics.timer <<'EOF'
-[Unit]
-Description=Collect rent-node Docker metrics every 30 seconds
-
-[Timer]
-OnBootSec=20s
-OnUnitActiveSec=30s
-AccuracySec=5s
-Unit=rent-node-metrics.service
-
-[Install]
-WantedBy=timers.target
-EOF
+# Systemd definitions are source-controlled; local copies are deployment artifacts only.
+install -m 0644 "$SCRIPT_DIR/systemd/node-exporter.service" /etc/systemd/system/node-exporter.service
+install -m 0644 "$SCRIPT_DIR/systemd/rent-node-metrics.service" /etc/systemd/system/rent-node-metrics.service
+install -m 0644 "$SCRIPT_DIR/systemd/rent-node-metrics.timer" /etc/systemd/system/rent-node-metrics.timer
 
 systemctl daemon-reload
 systemctl enable --now node-exporter.service
@@ -105,6 +68,6 @@ if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then
 fi
 
 echo "[OK] native node_exporter installed: v${NODE_EXPORTER_VERSION}"
+echo "[OK] Git-tracked systemd units installed"
 echo "[OK] rent-node metrics: systemd timer every 30s"
 echo "[OK] monitoring endpoint: :9100/metrics"
-echo "[IMPORTANT] allow TCP/9100 only from the corresponding cluster master"
