@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ADMIN_USER="ysadmin"
-STATE_DIR="/var/lib/cpu-cluster-manager"
+ADMIN_USER="${ADMIN_USER:-ysadmin}"
+STATE_DIR="${STATE_DIR:-/var/lib/cpu-cluster-manager}"
 RELEASE_DIR="$STATE_DIR/releases"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_STATE="$ROOT/.cluster-source-state"
@@ -37,7 +37,7 @@ fi
 CURRENT_HASH="$(bash "$ROOT/scripts/source-hash.sh")"
 [ "$CURRENT_HASH" = "$SOURCE_HASH" ] || fail "master source changed after stamp: stamped=$SOURCE_HASH current=$CURRENT_HASH"
 
-install -d -m 0700 "$RELEASE_DIR"
+install -d -m 0700 "$STATE_DIR" "$RELEASE_DIR"
 BUILD_DIR="$(mktemp -d "$STATE_DIR/.release-build.XXXXXX")"
 STAGE="$BUILD_DIR/root"
 TMP_BUNDLE="$RELEASE_DIR/.ccm-${COMMIT}.tar.$$.tmp"
