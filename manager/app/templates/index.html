@@ -38,7 +38,7 @@
     .dot { width:9px; height:9px; border-radius:50%; background:#7b8496; flex:none; }
     .dot.ok { background:#3fb950; }
     .dot.bad { background:#f85149; }
-    .actions-cell { min-width:650px; }
+    .actions-cell { min-width:720px; }
     .action-layout { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; width:100%; }
     .action-safe,.action-danger { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     .action-danger { justify-content:flex-end; }
@@ -49,14 +49,18 @@
     .copy-button { padding:5px 9px; font-size:12px; }
     .monitor-toolbar { justify-content:space-between; margin-bottom:10px; }
     #grafana-frame { display:block; width:100%; height:calc(100vh - 175px); min-height:620px; border:1px solid #27324a; border-radius:10px; background:#11182a; }
-    dialog { width:min(820px,calc(100vw - 40px)); border:1px solid #34405a; border-radius:10px; background:#11182a; color:#eef2f7; }
+    dialog { width:min(820px,calc(100vw - 40px)); border:1px solid #34405a; border-radius:10px; background:#11182a; color:#eef2f7; padding:18px; }
     dialog::backdrop { background:rgba(0,0,0,.65); }
+    #confirm-dialog { width:min(560px,calc(100vw - 40px)); }
+    .dialog-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .confirm-message { color:#cbd3df; line-height:1.55; margin:14px 0 18px; white-space:pre-line; }
+    .dialog-actions { display:flex; justify-content:flex-end; gap:8px; }
     pre { white-space:pre-wrap; word-break:break-word; background:#090e1a; padding:14px; border-radius:8px; max-height:60vh; overflow:auto; }
     form.logout { margin:0; }
     .warning { border:1px solid #6e4f2b; background:#251d12; padding:10px 12px; border-radius:8px; margin-bottom:16px; color:#e5c07b; }
     @media (max-width:1100px) {
       .table-wrap { overflow-x:auto; }
-      table { min-width:1180px; }
+      table { min-width:1240px; }
       header,.cluster-head { align-items:flex-start; }
       #grafana-frame { min-height:520px; }
     }
@@ -98,10 +102,17 @@
 </main>
 
 <dialog id="logs-dialog">
-  <form method="dialog" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-    <strong id="logs-title">Logs</strong><button>Close</button>
-  </form>
+  <div class="dialog-head"><strong id="logs-title">Logs</strong><button type="button" id="logs-close">Close</button></div>
   <pre id="logs-content">Loading…</pre>
+</dialog>
+
+<dialog id="confirm-dialog">
+  <div class="dialog-head"><strong id="confirm-title">Confirm action</strong></div>
+  <div id="confirm-message" class="confirm-message"></div>
+  <div class="dialog-actions">
+    <button type="button" id="confirm-cancel">Cancel</button>
+    <button type="button" id="confirm-ok">Confirm</button>
+  </div>
 </dialog>
 
 <script>
@@ -110,12 +121,18 @@ const updated=document.getElementById('updated');
 const logsDialog=document.getElementById('logs-dialog');
 const logsTitle=document.getElementById('logs-title');
 const logsContent=document.getElementById('logs-content');
+const confirmDialog=document.getElementById('confirm-dialog');
+const confirmTitle=document.getElementById('confirm-title');
+const confirmMessage=document.getElementById('confirm-message');
+const confirmOk=document.getElementById('confirm-ok');
+const confirmCancel=document.getElementById('confirm-cancel');
 const grafanaFrame=document.getElementById('grafana-frame');
 const monitorActions=document.getElementById('monitor-actions');
 const monitorLabel=document.getElementById('monitor-label');
 let clusterData=[];
 let grafanaLoaded=false;
 let activeMonitorCluster='';
+let confirmationResolver=null;
 
 // Deliberately in-memory only: survives automatic/manual data refreshes because
 // the page is not reloaded, but disappears on F5/Ctrl+R/browser navigation.
@@ -123,7 +140,7 @@ const credentialCache=new Map();
 
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function credentialKey(cluster,node){return `${cluster}/${node}`;}
-function actionButton(cluster,node,action,label,danger=false){return `<button type="button" data-cluster="${esc(cluster)}" data-node="${esc(node)}" data-action="${action}" class="${danger?'danger':''}">${label}</button>`;}
+function actionButton(cluster,node,action,label,danger=false,disabled=false){return `<button type="button" data-cluster="${esc(cluster)}" data-node="${esc(node)}" data-action="${action}" class="${danger?'danger':''}" ${disabled?'disabled':''}>${label}</button>`;}
 function monitorButton(cluster,node=''){return `<button type="button" data-monitor-cluster="${esc(cluster)}" data-monitor-node="${esc(node)}">Open</button>`;}
 
 function credentialHtml(cluster,node){
@@ -136,10 +153,14 @@ function renderNode(cluster,n){
   if(!n.reachable){
     return `<tr><td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.host)}</div></td><td><span class="status"><span class="dot bad"></span>Control unavailable</span><div class="error-text">${esc(n.error||'SSH control path unavailable')}</div></td><td>-</td><td>${monitorButton(cluster,n.name)}</td><td>-</td></tr>`;
   }
-  const running=n.container_status==='running';
-  const safe=`${actionButton(cluster,n.name,'start','Start')}${actionButton(cluster,n.name,'stop','Stop')}${actionButton(cluster,n.name,'restart','Restart')}${actionButton(cluster,n.name,'logs','Logs')}`;
-  const risky=`${actionButton(cluster,n.name,'reset-password','Reset PW',true)}${actionButton(cluster,n.name,'recreate','Recreate',true)}${actionButton(cluster,n.name,'reboot','Reboot host',true)}`;
-  return `<tr><td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.host)}</div></td><td><span class="status"><span class="dot ${running?'ok':''}"></span>${esc(n.container_status||'missing')}</span><div class="muted">${esc(n.container_uptime||'')}</div></td><td>${esc(n.renter||'-')}</td><td>${monitorButton(cluster,n.name)}</td><td class="actions-cell"><div class="action-layout"><div class="action-safe">${safe}</div><div class="action-danger">${risky}</div></div>${credentialHtml(cluster,n.name)}</td></tr>`;
+
+  const status=String(n.container_status||'missing');
+  const running=status==='running';
+  const canStart=status==='exited'||status==='created';
+  const safe=`${actionButton(cluster,n.name,'logs','Logs')}${actionButton(cluster,n.name,'start','Start',false,!canStart)}${actionButton(cluster,n.name,'stop','Stop',false,!running)}${actionButton(cluster,n.name,'restart','Restart',false,!running)}`;
+  const risky=`${actionButton(cluster,n.name,'reset-password','Reset PW',true,!running)}${actionButton(cluster,n.name,'recreate','Recreate',true)}${actionButton(cluster,n.name,'reboot','Reboot host',true)}${actionButton(cluster,n.name,'reset','Full Reset',true)}`;
+
+  return `<tr><td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.host)}</div></td><td><span class="status"><span class="dot ${running?'ok':''}"></span>${esc(status)}</span><div class="muted">${esc(n.container_uptime||'')}</div></td><td>${esc(n.renter||'-')}</td><td>${monitorButton(cluster,n.name)}</td><td class="actions-cell"><div class="action-layout"><div class="action-safe">${safe}</div><div class="action-danger">${risky}</div></div>${credentialHtml(cluster,n.name)}</td></tr>`;
 }
 
 function renderCluster(c){
@@ -174,6 +195,38 @@ function openMonitoring(cluster,node=''){
   grafanaLoaded=true;
   renderMonitoringButtons();
   selectView('monitoring');
+}
+
+function finishConfirmation(result){
+  const resolver=confirmationResolver;
+  confirmationResolver=null;
+  if(confirmDialog.open) confirmDialog.close();
+  if(resolver) resolver(result);
+}
+
+function requestConfirmation(title,message,danger=false){
+  if(confirmationResolver) finishConfirmation(false);
+  confirmTitle.textContent=title;
+  confirmMessage.textContent=message;
+  confirmOk.classList.toggle('danger',danger);
+  return new Promise(resolve=>{
+    confirmationResolver=resolve;
+    confirmDialog.showModal();
+  });
+}
+
+function actionConfirmation(cluster,node,action){
+  const target=`${cluster}/${node}`;
+  switch(action){
+    case 'start': return {title:'Start rent-node',message:`${target}의 rent-node 컨테이너를 시작할까요?`,danger:false};
+    case 'stop': return {title:'Stop rent-node',message:`${target}의 rent-node 컨테이너를 중지할까요?`,danger:false};
+    case 'restart': return {title:'Restart rent-node',message:`${target}의 rent-node 컨테이너를 재시작할까요?`,danger:false};
+    case 'reset-password': return {title:'Reset renter password',message:`${target}의 renter 비밀번호를 새 8자리 임시 비밀번호로 변경할까요?`,danger:true};
+    case 'recreate': return {title:'Recreate rent-node',message:`${target}의 rent-node 컨테이너를 현재 이미지로 재생성합니다.\nhome/work/auth 데이터와 현재 renter 비밀번호는 유지됩니다.`,danger:true};
+    case 'reboot': return {title:'Reboot compute host',message:`${target} compute host를 재부팅합니다.\nDocker의 정상 shutdown 경로를 사용하며 rent-node는 부팅 후 restart policy에 따라 복귀합니다.`,danger:true};
+    case 'reset': return {title:'Full Reset',message:`${target}의 rent-node와 renter 저장소를 완전히 초기화합니다.\n/home, /workspace, auth, SSH host key, logs의 기존 데이터가 삭제되고 renter 계정과 비밀번호가 새로 생성됩니다. 이 작업은 되돌릴 수 없습니다.`,danger:true};
+    default: return null;
+  }
 }
 
 async function refreshShutdownState(c){
@@ -248,13 +301,9 @@ async function runAction(cluster,node,action,button){
     return;
   }
 
-  if(action==='reset-password'){
-    if(!confirm(`${cluster}/${node}: renter 비밀번호를 새 8자리 임시 비밀번호로 변경할까요?`)) return;
-  }else if(action==='recreate'){
-    if(!confirm(`${cluster}/${node}: rent-node 컨테이너를 현재 이미지로 재생성합니다. home/work/auth 데이터와 현재 renter 비밀번호는 유지됩니다. 계속할까요?`)) return;
-  }else if(action==='reboot'){
-    if(!confirm(`${cluster}/${node}: compute host를 재부팅합니다. Docker의 정상 shutdown 경로를 사용하며 rent-node는 부팅 후 restart policy에 따라 복귀합니다. 계속할까요?`)) return;
-  }
+  const confirmation=actionConfirmation(cluster,node,action);
+  if(!confirmation){alert(`Unsupported action: ${action}`);return;}
+  if(!(await requestConfirmation(confirmation.title,confirmation.message,confirmation.danger))) return;
 
   button.disabled=true;
   try{
@@ -263,12 +312,10 @@ async function runAction(cluster,node,action,button){
     const body=await r.json();
     if(!r.ok) throw new Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail));
 
-    if(action==='reset-password'){
+    if(action==='reset-password'||action==='reset'){
       const credential=body.credential;
-      if(!credential||!credential.password) throw new Error('Password reset returned no credential');
+      if(!credential||!credential.password) throw new Error(`${action} returned no credential`);
       credentialCache.set(credentialKey(cluster,node),credential);
-      await loadClusters();
-      return;
     }
     if(action==='reboot'){
       alert(`${cluster}/${node}: reboot requested. The node may be temporarily unavailable while it restarts.`);
@@ -282,7 +329,12 @@ async function runAction(cluster,node,action,button){
 }
 
 async function shutdownComputes(cluster,button){
-  if(!confirm(`${cluster}: 모든 rent-node를 먼저 정지하고 모든 compute host를 종료합니다. 계속할까요?`)) return;
+  const ok=await requestConfirmation(
+    'Shutdown all compute nodes',
+    `${cluster}의 모든 rent-node를 먼저 정지하고 모든 compute host를 안전하게 종료합니다. 계속할까요?`,
+    true,
+  );
+  if(!ok) return;
   button.disabled=true;
   const statusEl=document.querySelector(`[data-shutdown-status="${CSS.escape(cluster)}"]`);
   if(statusEl) statusEl.textContent='Stopping rent-node containers, powering off compute hosts, and waiting for offline confirmation…';
@@ -300,8 +352,12 @@ async function shutdownComputes(cluster,button){
 }
 
 async function shutdownMaster(cluster,button){
-  const typed=prompt(`${cluster} master를 종료합니다. 확인을 위해 정확히 ${cluster} 를 입력하세요.`,'');
-  if(typed!==cluster) return;
+  const ok=await requestConfirmation(
+    'Shutdown master',
+    `${cluster} master를 종료합니다. 모든 compute가 종료 확인된 경우에만 서버가 이 요청을 허용합니다. 계속할까요?`,
+    true,
+  );
+  if(!ok) return;
   button.disabled=true;
   try{
     const r=await fetch(`/api/clusters/${encodeURIComponent(cluster)}/shutdown/master`,{method:'POST'});
@@ -313,6 +369,11 @@ async function shutdownMaster(cluster,button){
     button.disabled=false;
   }
 }
+
+document.getElementById('logs-close').addEventListener('click',()=>logsDialog.close());
+confirmCancel.addEventListener('click',()=>finishConfirmation(false));
+confirmOk.addEventListener('click',()=>finishConfirmation(true));
+confirmDialog.addEventListener('cancel',e=>{e.preventDefault();finishConfirmation(false);});
 
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>selectView(b.dataset.view)));
 monitorActions.addEventListener('click',e=>{
