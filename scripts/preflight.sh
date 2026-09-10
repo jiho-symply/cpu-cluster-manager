@@ -36,7 +36,7 @@ say "kernel" "$(uname -r)"
 say "architecture" "$(uname -m)"
 
 [ "$PLATFORM" != "unsupported" ] || fail "supported OS: Ubuntu 20.04 or CentOS 7"
-need_cmds awk grep sed sort stat systemctl docker getent id install mktemp od tr
+need_cmds awk grep sed sort stat systemctl docker getent id install mktemp od tr sha256sum
 id "$ADMIN_USER" >/dev/null 2>&1 || fail "required admin account is missing: $ADMIN_USER"
 say "admin account" "$ADMIN_USER"
 
@@ -71,7 +71,7 @@ if [ "$PLATFORM" = "centos7" ]; then
 fi
 
 if [ "$ROLE" = "master" ] || [ "$ROLE" = "all" ]; then
-  need_cmds curl ssh-keygen ssh-keyscan git
+  need_cmds curl ssh-keygen ssh-keyscan git findmnt
   if docker inspect rent-node >/dev/null 2>&1; then
     fail "rent-node exists on this host; refusing master installation on a compute-like node"
   fi
@@ -80,7 +80,7 @@ if [ "$ROLE" = "master" ] || [ "$ROLE" = "all" ]; then
 fi
 
 if [ "$ROLE" = "compute" ] || [ "$ROLE" = "all" ]; then
-  need_cmds curl tar sha256sum useradd visudo ss git
+  need_cmds curl tar sha256sum useradd visudo ss
   RENT_STATE="$(docker inspect -f '{{.State.Status}}' rent-node 2>/dev/null || echo missing)"
   say "rent-node" "$RENT_STATE"
 fi
