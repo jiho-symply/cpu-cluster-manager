@@ -133,7 +133,7 @@
         "sort": 1,
         "multi": false,
         "includeAll": false,
-        "hide": 0,
+        "hide": 2,
         "skipUrlSync": false
       }
     ]
@@ -146,6 +146,6 @@
   "timezone": "browser",
   "title": "CPU Cluster · Monitoring",
   "uid": "cluster-monitoring",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
