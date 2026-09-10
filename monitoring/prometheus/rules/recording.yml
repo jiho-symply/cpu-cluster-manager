@@ -1,9 +1,11 @@
 groups:
   - name: cluster-live
-    interval: 30s
+    interval: 5s
     rules:
+      # irate uses the most recent counter samples, so with a 5s scrape this
+      # reacts at the requested near-real-time resolution instead of a 2m average.
       - record: cluster_node_cpu_utilization_ratio
-        expr: 1 - avg by (cluster, platform, node) (rate(node_cpu_seconds_total{mode="idle"}[2m]))
+        expr: 1 - avg by (cluster, platform, node) (irate(node_cpu_seconds_total{mode="idle"}[30s]))
 
       - record: cluster_node_memory_utilization_ratio
         expr: 1 - (max by (cluster, platform, node) (node_memory_MemAvailable_bytes) / max by (cluster, platform, node) (node_memory_MemTotal_bytes))
@@ -30,10 +32,10 @@ groups:
 
   # Long-term contract: one aggregate sample per 5-minute bucket.
   # For each resource, preserve the bucket envelope as min / avg / max.
-  # query_offset leaves one scrape interval for late samples before finalizing a bucket.
+  # query_offset leaves a small late-sample margin before finalizing a bucket.
   - name: cluster-5m-archive
     interval: 5m
-    query_offset: 30s
+    query_offset: 15s
     rules:
       - record: archive_node_cpu_utilization_ratio_min5m
         expr: min_over_time(cluster_node_cpu_utilization_ratio[5m])
