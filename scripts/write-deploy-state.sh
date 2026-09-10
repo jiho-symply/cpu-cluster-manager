@@ -40,8 +40,8 @@ if [ "$(id -u)" -eq 0 ]; then
   install -d -m 0755 "$DEST_DIR"
   install -m 0644 "$TMP" "$DEST"
 else
-  sudo install -d -m 0755 "$DEST_DIR"
-  sudo install -m 0644 "$TMP" "$DEST"
+  sudo -n install -d -m 0755 "$DEST_DIR"
+  sudo -n install -m 0644 "$TMP" "$DEST"
 fi
 
 echo "[OK] deployed commit recorded: $COMMIT"
