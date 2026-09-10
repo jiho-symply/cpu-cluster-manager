@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACTION=""
+IFS= read -r ACTION || true
+
+case "$ACTION" in
+  status)
+    printf 'HOST=%s\n' "$(hostname)"
+    printf 'READY=1\n'
+    ;;
+  poweroff)
+    # Reply before shutdown so the web request can complete. The helper remains
+    # alive briefly, flushes storage, then asks systemd for a non-blocking
+    # poweroff. Access is restricted to the root-owned Unix socket.
+    printf 'POWER_OFF_REQUESTED=1\n'
+    sync
+    sleep 2
+    systemctl poweroff --no-block
+    ;;
+  *)
+    printf 'ERROR=unsupported action\n' >&2
+    exit 2
+    ;;
+esac
