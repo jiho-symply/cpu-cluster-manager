@@ -8,10 +8,38 @@ TARGET_DOCKER_RPM="20.10.17-3.el7"
 TARGET_CONTAINERD_RPM="1.6.6-3.1.el7"
 DOCKER_RPM_BASE="https://download.docker.com/linux/centos/7/x86_64/stable/Packages"
 DOCKER_GPG_URL="https://download.docker.com/linux/centos/gpg"
+CENTOS_EXTRAS_BASE_PRIMARY="https://vault.centos.org/7.9.2009/extras/x86_64/Packages"
+CENTOS_EXTRAS_BASE_FALLBACK="https://mirrors.aliyun.com/centos/7.9.2009/extras/x86_64/Packages"
+CENTOS_GPG_KEY="/etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7"
 
 fail() { echo "[ERROR] $*" >&2; exit 1; }
 version_ge() {
   [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
+}
+verify_rpm_signature() {
+  local path="$1"
+  local out
+  out="$(rpm -K "$path" 2>&1)" || {
+    echo "$out" >&2
+    fail "RPM signature verification failed: $(basename "$path")"
+  }
+  if ! grep -Eq '(^|[[:space:]])OK$|digests signatures OK' <<<"$out"; then
+    echo "$out" >&2
+    fail "RPM signature verification failed: $(basename "$path")"
+  fi
+}
+download_centos_extra() {
+  local rpm_file="$1"
+  local base
+  for base in "$CENTOS_EXTRAS_BASE_PRIMARY" "$CENTOS_EXTRAS_BASE_FALLBACK"; do
+    echo "[INFO] downloading $rpm_file from $base"
+    if curl -fL --retry 3 --connect-timeout 10 --max-time 120 \
+      "$base/$rpm_file" -o "$TMP/$rpm_file"; then
+      return 0
+    fi
+    rm -f "$TMP/$rpm_file"
+  done
+  fail "cannot download required CentOS 7 Extras RPM: $rpm_file"
 }
 
 [ "$(id -u)" -eq 0 ] || fail "ensure-compute-docker.sh must run as root"
@@ -65,38 +93,57 @@ TMP="$(mktemp -d /var/tmp/ccm-docker-upgrade.XXXXXX)"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
-# Only packages required by the rootful Docker daemon are included here.
-# docker-ce-rootless-extras is deliberately excluded: this cluster never runs
-# rootless dockerd, and that optional package pulls fuse-overlayfs/slirp4netns
-# dependencies that are unavailable on some EOL CentOS 7 hosts.
-RPM_FILES=(
+# Docker CE 20.10.17's EL7 RPM metadata requires docker-ce-rootless-extras.
+# Although this cluster uses the normal rootful daemon, RPM dependency closure
+# must still be complete. Its two EL7 dependencies are pulled from the archived
+# CentOS 7 Extras set, plus fuse3-libs required by fuse-overlayfs. Everything is
+# pinned and installed in one local transaction; no retired CentOS yum repo is
+# enabled and --nodeps/--skip-broken are intentionally forbidden.
+DOCKER_RPMS=(
   "containerd.io-${TARGET_CONTAINERD_RPM}.x86_64.rpm"
   "docker-ce-cli-${TARGET_DOCKER_RPM}.x86_64.rpm"
+  "docker-ce-rootless-extras-${TARGET_DOCKER_RPM}.x86_64.rpm"
   "docker-ce-${TARGET_DOCKER_RPM}.x86_64.rpm"
 )
+CENTOS_EXTRA_RPMS=(
+  "fuse3-libs-3.6.1-4.el7.x86_64.rpm"
+  "fuse-overlayfs-0.7.2-6.el7_8.x86_64.rpm"
+  "slirp4netns-0.4.3-4.el7_8.x86_64.rpm"
+)
 
-for rpm_file in "${RPM_FILES[@]}"; do
+for rpm_file in "${DOCKER_RPMS[@]}"; do
   echo "[INFO] downloading $rpm_file"
   curl -fL --retry 5 --connect-timeout 10 --max-time 180 \
     "$DOCKER_RPM_BASE/$rpm_file" -o "$TMP/$rpm_file"
 done
+for rpm_file in "${CENTOS_EXTRA_RPMS[@]}"; do
+  download_centos_extra "$rpm_file"
+done
 
-# Import Docker's official signing key, then require every downloaded RPM to
-# have a valid signature. The package URLs are pinned to the validated release.
+# Verify Docker packages against Docker's signing key and CentOS Extras packages
+# against the CentOS 7 key shipped with the host OS.
 echo "[INFO] importing Docker RPM signing key"
 curl -fL --retry 5 --connect-timeout 10 --max-time 60 "$DOCKER_GPG_URL" -o "$TMP/docker.gpg"
 rpm --import "$TMP/docker.gpg"
-for rpm_file in "${RPM_FILES[@]}"; do
-  rpm -K "$TMP/$rpm_file" | grep -Eq 'rsa sha(1|256).*OK|digests signatures OK' \
-    || fail "RPM signature verification failed: $rpm_file"
+[ -r "$CENTOS_GPG_KEY" ] || fail "CentOS 7 RPM signing key missing: $CENTOS_GPG_KEY"
+rpm --import "$CENTOS_GPG_KEY"
+
+for rpm_file in "${DOCKER_RPMS[@]}"; do
+  verify_rpm_signature "$TMP/$rpm_file"
+done
+for rpm_file in "${CENTOS_EXTRA_RPMS[@]}"; do
+  verify_rpm_signature "$TMP/$rpm_file"
 done
 
-# Resolve only against already-installed CentOS dependencies plus the three
-# pinned local Docker RPMs. This avoids depending on CentOS 7's retired mirrors.
-# yum resolves the full transaction before changing packages, so a missing
-# required dependency fails before the Docker daemon is touched.
-echo "[INFO] validating pinned Docker RPM transaction"
-yum -y --disablerepo='*' localinstall "${RPM_FILES[@]/#/$TMP/}"
+# yum resolves the complete transaction before changing Docker. Pre-existing
+# unrelated rpmdb inconsistencies may be reported by yum check, but they do not
+# enter this transaction unless they are actual dependencies of these packages.
+echo "[INFO] validating/installing pinned Docker dependency transaction"
+LOCAL_RPMS=()
+for rpm_file in "${CENTOS_EXTRA_RPMS[@]}" "${DOCKER_RPMS[@]}"; do
+  LOCAL_RPMS+=("$TMP/$rpm_file")
+done
+yum -y --disablerepo='*' localinstall "${LOCAL_RPMS[@]}"
 
 systemctl daemon-reload
 systemctl enable docker.service >/dev/null
