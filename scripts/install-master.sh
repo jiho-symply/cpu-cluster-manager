@@ -3,6 +3,7 @@ set -euo pipefail
 
 ADMIN_USER="ysadmin"
 STATE_DIR="/var/lib/cpu-cluster-manager"
+ROLE_FILE="$STATE_DIR/role"
 SSH_DIR="$STATE_DIR/ssh"
 DEFAULT_CONFIG="$STATE_DIR/cluster.local.env"
 CONFIG="${1:-$DEFAULT_CONFIG}"
@@ -42,6 +43,17 @@ case "$STATE_FSTYPE" in
     exit 2
     ;;
 esac
+
+EXISTING_ROLE="$(cat "$ROLE_FILE" 2>/dev/null || true)"
+if [ -z "$EXISTING_ROLE" ] && [ -f "$STATE_DIR/deployed-version" ]; then
+  EXISTING_ROLE="$(awk -F= '$1=="role" {print $2; exit}' "$STATE_DIR/deployed-version" 2>/dev/null || true)"
+fi
+if [ "$EXISTING_ROLE" = "compute" ]; then
+  echo "[ERROR] host is already marked as compute; refusing master installation" >&2
+  exit 2
+fi
+printf 'master\n' > "$ROLE_FILE"
+chmod 0600 "$ROLE_FILE"
 
 if [ "$CONFIG" = "cluster.local.env" ]; then
   CONFIG="$DEFAULT_CONFIG"
@@ -135,6 +147,7 @@ echo "[INFO] archive max retention  : 5y"
 echo "[INFO] archive bucket         : 5m min/avg/max"
 echo "[INFO] shared source          : $ROOT"
 echo "[INFO] host-local state       : $STATE_DIR"
+echo "[INFO] host role              : master"
 
 bash ./scripts/write-source-state.sh "$CONFIG"
 bash ./scripts/prepare-master-ssh.sh "$CONFIG" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts"
