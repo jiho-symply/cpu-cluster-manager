@@ -108,6 +108,34 @@ for entry in "${ENTRIES[@]}"; do
   echo "[OK] $name = $host"
 done
 
+# Compute /home is NFS-backed. A master-side git pull can be visible to clients
+# at slightly different times because of NFS attribute/data caching. Confirm
+# every compute sees the exact stamped source before changing any compute.
+STAMPED_SOURCE_HASH="$(awk -F= '$1=="source_hash" {print $2; exit}' "$ROOT/.cluster-source-state")"
+[[ "$STAMPED_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || fail "invalid source hash stamp before compute rollout"
+SOURCE_VIEW_RETRIES=15
+SOURCE_VIEW_RETRY_SECONDS=5
+echo "[3b/7] Waiting for shared source view to converge on every compute"
+for entry in "${ENTRIES[@]}"; do
+  name="${entry%%@*}"
+  host="${entry#*@}"
+  remote_hash=""
+  for ((attempt=1; attempt<=SOURCE_VIEW_RETRIES; attempt++)); do
+    remote_hash="$(ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "cd '$ROOT' && bash scripts/source-hash.sh" 2>/dev/null || true)"
+    if [ "$remote_hash" = "$STAMPED_SOURCE_HASH" ]; then
+      break
+    fi
+    if [ "$attempt" -lt "$SOURCE_VIEW_RETRIES" ]; then
+      [ "$attempt" -ne 1 ] || echo "[WAIT] $name source view has not converged yet; retrying for up to $(( (SOURCE_VIEW_RETRIES - 1) * SOURCE_VIEW_RETRY_SECONDS ))s"
+      sleep "$SOURCE_VIEW_RETRY_SECONDS"
+    fi
+  done
+  if [ "$remote_hash" != "$STAMPED_SOURCE_HASH" ]; then
+    fail "shared source view did not converge on $name ($host): stamped=$STAMPED_SOURCE_HASH current=${remote_hash:--}; no compute installation started"
+  fi
+  echo "[OK] $name source view = ${STAMPED_SOURCE_HASH:0:12}"
+done
+
 echo "[4/7] Preflighting sudo on every compute"
 NEED_PASSWORD=0
 for entry in "${ENTRIES[@]}"; do
