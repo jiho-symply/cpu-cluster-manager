@@ -29,7 +29,7 @@ grep -Fq 'docker-ce-rootless-extras-${TARGET_DOCKER_RPM}.x86_64.rpm' scripts/ens
 grep -Fq 'fuse3-libs-3.6.1-4.el7.x86_64.rpm' scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must pin fuse3-libs"
 grep -Fq 'fuse-overlayfs-0.7.2-6.el7_8.x86_64.rpm' scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must pin fuse-overlayfs"
 grep -Fq 'slirp4netns-0.4.3-4.el7_8.x86_64.rpm' scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must pin slirp4netns"
-grep -Fq "--disablerepo='*'" scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must not depend on retired yum repositories"
+grep -Fq -- "--disablerepo='*'" scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must not depend on retired yum repositories"
 if grep -Eq -- '--nodeps|--skip-broken' scripts/ensure-compute-docker.sh; then
   fail "Docker repair must never bypass RPM dependency integrity"
 fi
