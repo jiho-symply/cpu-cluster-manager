@@ -1,6 +1,6 @@
 global:
-  scrape_interval: 30s
-  scrape_timeout: 10s
+  scrape_interval: 5s
+  scrape_timeout: 4s
   evaluation_interval: 30s
 
 rule_files:
@@ -20,8 +20,7 @@ scrape_configs:
         refresh_interval: 1m
     metric_relabel_configs:
       # Total host CPU utilization only needs idle counters. Dropping the other
-      # per-core modes substantially reduces 30-day hot-storage cardinality on
-      # large servers without losing the dashboard metric we use.
+      # per-core modes keeps 30-day hot storage bounded even at a 5s scrape.
       - source_labels: [__name__, mode]
         regex: 'node_cpu_seconds_total;(guest|guest_nice|iowait|irq|nice|softirq|steal|system|user)'
         action: drop
