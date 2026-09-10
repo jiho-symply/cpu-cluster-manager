@@ -17,6 +17,7 @@ KEY="$HOME/.ssh/cluster-manager_ed25519"
 KNOWN_HOSTS="$HOME/.ssh/cluster-manager_known_hosts"
 [ -f "$KEY" ] || { echo "manager private key not found: $KEY" >&2; exit 2; }
 [ -f "$KNOWN_HOSTS" ] || { echo "manager known_hosts not found: $KNOWN_HOSTS" >&2; exit 2; }
+EXPECTED_COMMIT="$(git rev-parse HEAD)"
 
 IFS=',' read -r -a ENTRIES <<< "$NODES_SPEC"
 FAIL=0
@@ -25,14 +26,22 @@ for entry in "${ENTRIES[@]}"; do
   host="${entry#*@}"
   echo "=== $name ($host) ==="
 
-  if ! ssh -T -i "$KEY" -p 22 \
+  if SUMMARY="$(ssh -T -i "$KEY" -p 22 \
       -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=5 \
       -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
-      "ysadmin@$host" summary; then
+      "ysadmin@$host" summary)"; then
+    printf '%s\n' "$SUMMARY"
+    echo "[OK] SSH control path"
+    NODE_COMMIT="$(printf '%s\n' "$SUMMARY" | awk -F= '$1=="DEPLOY_COMMIT" {print $2; exit}')"
+    if [ "$NODE_COMMIT" = "$EXPECTED_COMMIT" ]; then
+      echo "[OK] deployed commit matches master: ${EXPECTED_COMMIT:0:12}"
+    else
+      echo "[FAIL] deployment drift: compute=${NODE_COMMIT:--} master=$EXPECTED_COMMIT" >&2
+      FAIL=1
+    fi
+  else
     echo "[FAIL] SSH control path" >&2
     FAIL=1
-  else
-    echo "[OK] SSH control path"
   fi
 
   if METRICS="$(curl -fsS --connect-timeout 5 "http://${host}:9100/metrics" 2>/dev/null)" && \
@@ -60,4 +69,4 @@ if [ "$FAIL" -ne 0 ]; then
   exit 10
 fi
 
-echo "[OK] end-to-end cluster verification passed"
+echo "[OK] end-to-end cluster verification passed at commit ${EXPECTED_COMMIT:0:12}"
