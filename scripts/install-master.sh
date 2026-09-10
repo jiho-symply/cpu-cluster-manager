@@ -171,34 +171,48 @@ wait_http() {
   return 1
 }
 
-check_container_stable() {
-  local name="$1" status1 restart1 status2 restart2
-  status1="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
-  restart1="$(docker inspect -f '{{.RestartCount}}' "$name" 2>/dev/null || echo -1)"
+MASTER_CONTAINERS=(
+  cpu-cluster-manager
+  cpu-cluster-master-node-exporter
+  cpu-cluster-prometheus-hot
+  cpu-cluster-prometheus-archive
+  cpu-cluster-alertmanager
+  cpu-cluster-grafana
+)
+
+check_master_containers_stable() {
+  local i name status2 restart2 failed=0
+  local -a status1 restart1
+
+  # All containers share the same observation window. This preserves the
+  # previous status/restart-count test without sleeping once per container.
+  for i in "${!MASTER_CONTAINERS[@]}"; do
+    name="${MASTER_CONTAINERS[$i]}"
+    status1[$i]="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
+    restart1[$i]="$(docker inspect -f '{{.RestartCount}}' "$name" 2>/dev/null || echo -1)"
+  done
+
   sleep 3
-  status2="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
-  restart2="$(docker inspect -f '{{.RestartCount}}' "$name" 2>/dev/null || echo -1)"
-  if [ "$status1" = "running" ] && [ "$status2" = "running" ] && [ "$restart1" = "$restart2" ]; then
-    echo "[OK] stable container: $name (restarts=$restart2)"
-    return 0
-  fi
-  echo "[ERROR] unstable container: $name status=$status2 restarts=$restart2" >&2
-  docker logs --tail 40 "$name" >&2 2>/dev/null || true
-  return 1
+
+  for i in "${!MASTER_CONTAINERS[@]}"; do
+    name="${MASTER_CONTAINERS[$i]}"
+    status2="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
+    restart2="$(docker inspect -f '{{.RestartCount}}' "$name" 2>/dev/null || echo -1)"
+    if [ "${status1[$i]}" = "running" ] && [ "$status2" = "running" ] && [ "${restart1[$i]}" = "$restart2" ]; then
+      echo "[OK] stable container: $name (restarts=$restart2)"
+    else
+      echo "[ERROR] unstable container: $name status=$status2 restarts=$restart2" >&2
+      docker logs --tail 40 "$name" >&2 2>/dev/null || true
+      failed=1
+    fi
+  done
+
+  [ "$failed" -eq 0 ]
 }
 
 wait_http "FastAPI" "http://127.0.0.1:${UI_PORT}/healthz"
 wait_http "Grafana" "http://127.0.0.1:${GRAFANA_PORT}/api/health"
-
-for c in \
-  cpu-cluster-manager \
-  cpu-cluster-master-node-exporter \
-  cpu-cluster-prometheus-hot \
-  cpu-cluster-prometheus-archive \
-  cpu-cluster-alertmanager \
-  cpu-cluster-grafana; do
-  check_container_stable "$c"
-done
+check_master_containers_stable
 
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh ps
 bash ./scripts/write-deploy-state.sh master "$CONFIG"
