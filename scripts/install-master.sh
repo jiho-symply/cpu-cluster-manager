@@ -32,7 +32,6 @@ set_cfg() {
 if [ ! -f "$CONFIG" ]; then
   cp cluster.local.env.example "$CONFIG"
   chmod 600 "$CONFIG"
-  # Infer the logical cluster from the validated master OS for this deployment.
   # shellcheck disable=SC1091
   . /etc/os-release
   case "${ID:-}:${VERSION_ID:-}" in
@@ -70,7 +69,6 @@ fi
 IFS=',' read -r -a NODE_ENTRIES <<< "$NODES"
 NODE_COUNT="${#NODE_ENTRIES[@]}"
 [ "$NODE_COUNT" -gt 0 ] || { echo "[ERROR] no compute nodes in $CONFIG" >&2; exit 2; }
-
 for entry in "${NODE_ENTRIES[@]}"; do
   name="${entry%%@*}"
   host="${entry#*@}"
@@ -107,8 +105,35 @@ wait_http() {
   return 1
 }
 
+check_container_stable() {
+  local name="$1" status1 restart1 status2 restart2
+  status1="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
+  restart1="$(docker inspect -f '{{.RestartCount}}' "$name" 2>/dev/null || echo -1)"
+  sleep 3
+  status2="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
+  restart2="$(docker inspect -f '{{.RestartCount}}' "$name" 2>/dev/null || echo -1)"
+  if [ "$status1" = "running" ] && [ "$status2" = "running" ] && [ "$restart1" = "$restart2" ]; then
+    echo "[OK] stable container: $name (restarts=$restart2)"
+    return 0
+  fi
+  echo "[ERROR] unstable container: $name status=$status2 restarts=$restart2" >&2
+  docker logs --tail 40 "$name" >&2 2>/dev/null || true
+  return 1
+}
+
 wait_http "FastAPI" "http://127.0.0.1:${UI_PORT}/healthz"
 wait_http "Grafana" "http://127.0.0.1:${GRAFANA_PORT}/api/health"
+
+for c in \
+  cpu-cluster-manager \
+  cpu-cluster-master-node-exporter \
+  cpu-cluster-prometheus-hot \
+  cpu-cluster-prometheus-archive \
+  cpu-cluster-alertmanager \
+  cpu-cluster-grafana; do
+  check_container_stable "$c"
+done
+
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh ps
 bash ./scripts/write-deploy-state.sh master "$CONFIG"
 
