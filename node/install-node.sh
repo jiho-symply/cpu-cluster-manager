@@ -7,6 +7,7 @@ ROLE_FILE="$STATE_DIR/role"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SOURCE_STATE="$ROOT/.cluster-source-state"
+SOURCE_MANIFEST="$ROOT/.release-source-manifest.sha256"
 DEFAULT_PUBKEY="$ROOT/.cluster-manager.pub"
 PUBKEY_FILE="${1:-$DEFAULT_PUBKEY}"
 
@@ -43,9 +44,15 @@ if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
   exit 2
 fi
 
-# Verify the immutable local release before any package/runtime mutation.
+# Verify every file in the immutable local release before any package/runtime
+# mutation. The canonical manifest is generated with bytewise (LC_ALL=C)
+# ordering on the master, so release identity cannot vary with host locale.
 [ -f "$SOURCE_STATE" ] || {
   echo "[ERROR] immutable release source stamp missing: $SOURCE_STATE" >&2
+  exit 3
+}
+[ -f "$SOURCE_MANIFEST" ] || {
+  echo "[ERROR] immutable release file manifest missing: $SOURCE_MANIFEST" >&2
   exit 3
 }
 get_source() {
@@ -58,9 +65,22 @@ STAMPED_SOURCE_HASH="$(get_source source_hash)"
 [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid source commit stamp" >&2; exit 3; }
 [[ "$RENT_TREE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid rent-image tree stamp" >&2; exit 3; }
 [[ "$STAMPED_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || { echo "[ERROR] invalid source hash stamp" >&2; exit 3; }
+
+if ! (cd "$ROOT" && sha256sum -c .release-source-manifest.sha256 >/dev/null 2>&1); then
+  echo "[ERROR] local immutable release contains file checksum mismatches; refusing deployment" >&2
+  (cd "$ROOT" && sha256sum -c .release-source-manifest.sha256 2>&1 | grep -E 'FAILED|No such file|WARNING' || true) >&2
+  exit 3
+fi
+MANIFEST_HASH="$(sha256sum "$SOURCE_MANIFEST" | awk '{print $1}')"
+if [ "$MANIFEST_HASH" != "$STAMPED_SOURCE_HASH" ]; then
+  echo "[ERROR] local immutable release manifest identity mismatch; refusing deployment" >&2
+  echo "        stamped=$STAMPED_SOURCE_HASH" >&2
+  echo "        manifest=$MANIFEST_HASH" >&2
+  exit 3
+fi
 CURRENT_SOURCE_HASH="$(bash "$ROOT/scripts/source-hash.sh")"
 if [ "$CURRENT_SOURCE_HASH" != "$STAMPED_SOURCE_HASH" ]; then
-  echo "[ERROR] local immutable release hash mismatch; refusing deployment" >&2
+  echo "[ERROR] canonical local source hash mismatch despite valid per-file manifest; refusing deployment" >&2
   echo "        stamped=$STAMPED_SOURCE_HASH" >&2
   echo "        current=$CURRENT_SOURCE_HASH" >&2
   exit 3
