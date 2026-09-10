@@ -9,28 +9,48 @@
 
 Prometheus 3.14.0, Alertmanager 0.34.0, Grafana 13.2.1 and Python 3.12 Bookworm images were smoke-tested on both masters. Ubuntu 22.04 container execution and `:Z` bind mounts were smoke-tested on representative compute nodes.
 
-## Private management networks
+## Storage topology
 
-Use private management IPs in `cluster.local.env`:
+The actual clusters use shared filesystems:
+
+- Cluster 1 master: `/home` local ext4; compute nodes mount the master `/home` through NFS.
+- Cluster 2 master: `/home` local 30 TB XFS and `/opt` on the root XFS; compute nodes mount **both `/home` and `/opt` from the master through NFSv3**.
+- On both compute families, `/var/lib`, `/etc`, `/usr/local` and `/src/rent` are host-local.
+
+Therefore `/home` and `/opt` must not hold master-only secrets. Master config, manager SSH state and deploy metadata live under:
+
+```text
+/var/lib/cpu-cluster-manager
+```
+
+The installer checks that this path is not NFS/CIFS before storing secrets.
+
+The Git checkout intentionally remains under the shared `/home` and contains no secrets. It is the cluster-wide deployment source:
+
+```text
+/home/ysadmin/cpu-cluster-manager
+```
+
+The master writes `.cluster-source-state` there with commit, branch, remote, rent-image tree SHA and source SHA256. Compute installers recompute the hash before deployment, so compute hosts do not need Git installed.
+
+## Private management networks
 
 ```text
 Cluster 1: 192.168.100.x
 Cluster 2: 172.20.x.x
 ```
 
-Master→representative-compute ICMP and TCP/22 were validated on these paths. Prometheus also uses the same private IPs for TCP/9100.
+Master→representative-compute ICMP and TCP/22 were validated on these paths. Prometheus uses the same private IPs for TCP/9100.
 
-Renter account naming is intentionally independent of this management address. Existing `engclusterXXX` accounts follow the default-route/public service IPv4 last octet, and the rent scripts retain that behavior.
+Renter account naming remains based on the default-route/public IPv4 last octet and is independent of the management address.
 
 ## Single operator-managed file
 
 Each master has exactly one manually managed local config/secret file:
 
 ```text
-cluster.local.env
+/var/lib/cpu-cluster-manager/cluster.local.env
 ```
-
-It contains:
 
 ```dotenv
 CLUSTER=cluster1
@@ -41,77 +61,91 @@ UI_PORT=8080
 GRAFANA_PORT=3000
 ```
 
-No `.env`, `nodes.yaml`, or hand-written Prometheus target JSON is required. Generated target JSON is an implementation artifact only.
+No `.env`, `nodes.yaml`, or hand-written Prometheus target JSON is required.
 
-SSH private keys, known_hosts, renter auth DB, SSH host keys, and Prometheus TSDB are automatically managed runtime state and are not embedded into the env file.
+Master-only SSH state is also host-local:
+
+```text
+/var/lib/cpu-cluster-manager/ssh/id_ed25519
+/var/lib/cpu-cluster-manager/ssh/id_ed25519.pub
+/var/lib/cpu-cluster-manager/ssh/known_hosts
+```
 
 ## Master install
 
 ```bash
-git clone https://github.com/jiho-symply/cpu-cluster-manager.git
+git clone --branch dual-os-support --single-branch \
+  https://github.com/jiho-symply/cpu-cluster-manager.git
 cd cpu-cluster-manager
-git checkout dual-os-support
 bash scripts/install-master.sh
 ```
 
-First run creates `cluster.local.env`, autodetects `cluster1` on the Ubuntu master or `cluster2` on the CentOS master, and exits. Edit `NODES=` with all compute private management IPs, then:
+A fresh master may prompt for sudo once to create the host-local state directory. First run creates the onefile and exits. Edit only `NODES=`:
 
 ```bash
+vim /var/lib/cpu-cluster-manager/cluster.local.env
 bash scripts/install-master.sh
 ```
 
-If `ADMIN_PASSWORD` is blank, a random password is written back to the same mode-600 file.
+If `ADMIN_PASSWORD` is blank, a random password is written to the same mode-600 file.
 
-Master install runs as `ysadmin` without sudo. A successful install requires FastAPI/Grafana health checks and stable state/restart counts for all six master containers.
+Legacy pilot state under shared `/home` is migrated automatically. Existing manager key material is copied to host-local storage to preserve compute authorization; shared-home copies are removed only after the new master stack is healthy.
 
-The installer does not replace Docker Engine or modify site firewall/iptables policy.
+The installer does not replace Docker Engine or modify site firewall/iptables policy. A successful install requires FastAPI/Grafana health checks and stable restart counts for all six master containers.
 
 ## Compute install
 
-Copy only the corresponding master's public key:
-
-```bash
-scp ~/.ssh/cluster-manager_ed25519.pub ysadmin@<COMPUTE_PRIVATE_IP>:/tmp/cluster-manager_ed25519.pub
-```
-
-Then on the compute node:
-
-```bash
-git clone https://github.com/jiho-symply/cpu-cluster-manager.git
-cd cpu-cluster-manager
-git checkout dual-os-support
-sudo bash node/install-node.sh /tmp/cluster-manager_ed25519.pub
-rm -f /tmp/cluster-manager_ed25519.pub
-```
-
-The compute installer treats Git as authoritative for:
-
-- `/src/rent/image` deployed source
-- `/usr/local/sbin/cluster-node-admin`
-- `/usr/local/bin/cluster-node-ssh`
-- `/usr/local/bin/rent-node-metrics`
-- `/etc/sudoers.d/cpu-cluster-manager`
-- monitoring systemd units
-
-Persistent `/src/rent/home`, `/src/rent/work`, `/src/rent/auth`, `/src/rent/ssh` are never treated as Git content.
-
-Existing `rent-node` is preserved. If `node/rent-image` changed in Git, its tree SHA changes and the Docker image is rebuilt with that SHA as an image label; the running container is not automatically recreated.
-
-## Updates
+The compute consumes the master's shared source checkout. No compute-side Git clone is needed.
 
 Master:
 
 ```bash
-bash scripts/update-master.sh
+scp /var/lib/cpu-cluster-manager/ssh/id_ed25519.pub \
+  ysadmin@<COMPUTE_PRIVATE_IP>:/tmp/cluster-manager.pub
 ```
 
 Compute:
 
 ```bash
+cd /home/ysadmin/cpu-cluster-manager
+sudo bash node/install-node.sh /tmp/cluster-manager.pub
+rm -f /tmp/cluster-manager.pub
+```
+
+Before modifying the node, the installer validates the source stamp and recomputes the source SHA256.
+
+The compute installer manages:
+
+- `/src/rent/image`
+- `/usr/local/sbin/cluster-node-admin`
+- `/usr/local/bin/cluster-node-ssh`
+- `/usr/local/bin/rent-node-metrics`
+- `/etc/sudoers.d/cpu-cluster-manager`
+- monitoring systemd units
+- `/var/lib/cpu-cluster-manager/manager.pub`
+- `/var/lib/cpu-cluster-manager/deployed-version`
+
+Persistent `/src/rent/home`, `/src/rent/work`, `/src/rent/auth`, `/src/rent/ssh` are never treated as Git content.
+
+Cluster 1 pilot validation confirmed an existing `rent-node` kept the same container ID, start timestamp, image ID, renter UID and persistent-directory inodes after installation.
+
+## Updates
+
+Run Git only on the master:
+
+```bash
+cd /home/ysadmin/cpu-cluster-manager
+bash scripts/update-master.sh
+```
+
+Then on each compute:
+
+```bash
+cd /home/ysadmin/cpu-cluster-manager
 bash node/update-node.sh
 ```
 
-Both use `git pull --ff-only` and refuse tracked local modifications. There is no Git tag/release workflow; deployed state records the exact commit SHA.
+Compute update does not invoke Git. It validates the shared source stamp/hash and redeploys local management files.
 
 ## Verification
 
@@ -127,15 +161,7 @@ Whole cluster from master:
 bash scripts/verify-cluster.sh
 ```
 
-Deployment metadata:
-
-Master:
-
-```bash
-cat ~/.local/state/cpu-cluster-manager/deployed-version
-```
-
-Compute:
+Deployment metadata on both roles:
 
 ```bash
 cat /var/lib/cpu-cluster-manager/deployed-version
@@ -146,7 +172,7 @@ cat /var/lib/cpu-cluster-manager/deployed-version
 Compute node:
 
 - native node_exporter v1.12.1
-- SHA256 verification
+- release SHA256 verification
 - source-controlled systemd unit
 - 30-second source-controlled timer collecting `docker stats rent-node`
 - TCP/9100 on private management network
@@ -159,6 +185,6 @@ Master:
 - Grafana automatic `$__interval`
 - disk-capacity alerts only
 
-Archive compute cardinality is 18 series per compute node. Persistent block budget is 32 MB per monitored host (master + compute). Archive WAL segment size is **10 MB**, which is the minimum accepted by Prometheus 3.14. The first Cluster 1 pilot caught and corrected an invalid earlier 8 MB setting; CI now performs an actual Prometheus startup check with the configured storage flags so this class of error is detected before deployment.
+Archive compute cardinality is 18 series per compute node. Persistent block budget is 32 MB per monitored host (master + compute). Archive WAL segment size is 10 MB, the minimum accepted by the deployed Prometheus 3.14 image. CI performs a real Prometheus startup test for these storage flags.
 
-The block budget does not hard-cap transient Prometheus head/WAL/compaction overhead. Actual master disk usage should be observed during pilot operation.
+The block budget does not hard-cap transient Prometheus head/WAL/compaction overhead; actual master disk use should be observed during operation.
