@@ -2,8 +2,14 @@
 set -euo pipefail
 
 ADMIN_USER="ysadmin"
-CONFIG="${1:-cluster.local.env}"
+STATE_DIR="/var/lib/cpu-cluster-manager"
+SSH_DIR="$STATE_DIR/ssh"
+DEFAULT_CONFIG="$STATE_DIR/cluster.local.env"
+CONFIG="${1:-$DEFAULT_CONFIG}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LEGACY_CONFIG="$ROOT/cluster.local.env"
+LEGACY_KEY="$HOME/.ssh/cluster-manager_ed25519"
+LEGACY_KNOWN_HOSTS="$HOME/.ssh/cluster-manager_known_hosts"
 cd "$ROOT"
 
 if [ "$(id -un)" != "$ADMIN_USER" ]; then
@@ -12,6 +18,43 @@ if [ "$(id -un)" != "$ADMIN_USER" ]; then
 fi
 
 bash ./scripts/preflight.sh master
+
+ADMIN_GROUP="$(id -gn "$ADMIN_USER")"
+if [ ! -d "$STATE_DIR" ] || [ "$(stat -c %U "$STATE_DIR" 2>/dev/null || true)" != "$ADMIN_USER" ]; then
+  echo "[INFO] creating host-local master state directory (sudo may prompt once)"
+  sudo install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_GROUP" "$STATE_DIR"
+fi
+if [ ! -d "$SSH_DIR" ] || [ "$(stat -c %U "$SSH_DIR" 2>/dev/null || true)" != "$ADMIN_USER" ]; then
+  sudo install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_GROUP" "$SSH_DIR"
+fi
+chmod 0700 "$STATE_DIR" "$SSH_DIR"
+
+STATE_FSTYPE="$(findmnt -n -T "$STATE_DIR" -o FSTYPE 2>/dev/null || true)"
+case "$STATE_FSTYPE" in
+  nfs|nfs4|cifs)
+    echo "[ERROR] $STATE_DIR is on shared/network storage ($STATE_FSTYPE); refusing to store master secrets there" >&2
+    exit 2
+    ;;
+esac
+
+if [ "$CONFIG" = "cluster.local.env" ]; then
+  CONFIG="$DEFAULT_CONFIG"
+fi
+if [ "$CONFIG" != "$DEFAULT_CONFIG" ]; then
+  CONFIG_FSTYPE="$(findmnt -n -T "$(dirname "$CONFIG")" -o FSTYPE 2>/dev/null || true)"
+  case "$CONFIG_FSTYPE" in
+    nfs|nfs4|cifs)
+      echo "[ERROR] master config must be host-local, not $CONFIG_FSTYPE: $CONFIG" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+if [ ! -f "$CONFIG" ] && [ -f "$LEGACY_CONFIG" ]; then
+  install -m 0600 "$LEGACY_CONFIG" "$CONFIG"
+  rm -f "$LEGACY_CONFIG"
+  echo "[MIGRATE] moved cluster.local.env from shared source checkout to $CONFIG"
+fi
 
 get_cfg() {
   local key="$1"
@@ -25,13 +68,12 @@ set_cfg() {
     { print }
     END { if (!found) print k "=" v }
   ' "$CONFIG" > "$tmp"
-  mv "$tmp" "$CONFIG"
-  chmod 600 "$CONFIG"
+  install -m 0600 "$tmp" "$CONFIG"
+  rm -f "$tmp"
 }
 
 if [ ! -f "$CONFIG" ]; then
-  cp cluster.local.env.example "$CONFIG"
-  chmod 600 "$CONFIG"
+  install -m 0600 cluster.local.env.example "$CONFIG"
   # shellcheck disable=SC1091
   . /etc/os-release
   case "${ID:-}:${VERSION_ID:-}" in
@@ -85,8 +127,11 @@ echo "[INFO] monitored hosts        : $MONITORED_HOSTS (master + compute)"
 echo "[INFO] archive block budget   : $((MONITORED_HOSTS * 32))MB (32 MB/monitored host)"
 echo "[INFO] archive max retention  : 5y"
 echo "[INFO] archive bucket         : 5m min/avg/max"
+echo "[INFO] shared source          : $ROOT"
+echo "[INFO] host-local state       : $STATE_DIR"
 
-bash ./scripts/prepare-master-ssh.sh "$CONFIG"
+bash ./scripts/write-source-state.sh "$CONFIG"
+bash ./scripts/prepare-master-ssh.sh "$CONFIG" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts"
 bash ./scripts/render-monitoring-targets.sh "$CONFIG" monitoring/targets
 
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh config >/dev/null
@@ -137,17 +182,21 @@ done
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh ps
 bash ./scripts/write-deploy-state.sh master "$CONFIG"
 
+# Remove legacy copies only after the host-local key/config are active and services are stable.
+rm -f "$LEGACY_KEY" "${LEGACY_KEY}.pub" "$LEGACY_KNOWN_HOSTS"
+rm -f "$HOME/.local/state/cpu-cluster-manager/deployed-version" 2>/dev/null || true
+
 if [ "$GENERATED_ADMIN_PASSWORD" -eq 1 ]; then
   echo
   echo "[CREDENTIAL] admin_username=$ADMIN_USERNAME"
   echo "[CREDENTIAL] admin_password=$ADMIN_PASSWORD"
-  echo "[IMPORTANT] this credential is also stored in $CONFIG (mode 600)"
+  echo "[IMPORTANT] this credential is stored only in $CONFIG (mode 600)"
 fi
 
 echo
 echo "[OK] master installation complete"
-echo "[INFO] operator-managed local config: $ROOT/$CONFIG"
+echo "[INFO] operator-managed local config: $CONFIG"
 echo "[INFO] FastAPI: http://127.0.0.1:${UI_PORT}"
 echo "[INFO] Grafana: http://127.0.0.1:${GRAFANA_PORT}"
-echo "[INFO] manager public key: $HOME/.ssh/cluster-manager_ed25519.pub"
-echo "[NEXT] copy that public key to each compute node and run: sudo bash node/install-node.sh <pubkey-file>"
+echo "[INFO] manager public key: $SSH_DIR/id_ed25519.pub"
+echo "[NEXT] compute nodes use the shared source checkout; copy only this public key for initial authorization"
