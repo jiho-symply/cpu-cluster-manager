@@ -55,6 +55,16 @@ git archive --format=tar "$COMMIT" | tar -xf - -C "$STAGE"
 install -m 0644 "$SOURCE_STATE" "$STAGE/.cluster-source-state"
 install -m 0644 "$PUBLISHED_PUBKEY" "$STAGE/.cluster-manager.pub"
 
+# Embed a canonical per-file checksum manifest. It is outside the source-hash
+# file set, so it can independently prove every extracted file byte-for-byte
+# and report the exact file if a host ever sees a mismatch.
+(
+  cd "$STAGE"
+  bash scripts/source-manifest.sh > .release-source-manifest.sha256
+  sha256sum -c .release-source-manifest.sha256 >/dev/null
+)
+MANIFEST_HASH="$(sha256sum "$STAGE/.release-source-manifest.sha256" | awk '{print $1}')"
+[ "$MANIFEST_HASH" = "$SOURCE_HASH" ] || fail "release manifest hash does not match stamped source: stamped=$SOURCE_HASH manifest=$MANIFEST_HASH"
 STAGED_HASH="$(cd "$STAGE" && bash scripts/source-hash.sh)"
 [ "$STAGED_HASH" = "$SOURCE_HASH" ] || fail "Git archive does not match stamped source hash: stamped=$SOURCE_HASH archive=$STAGED_HASH"
 
@@ -73,3 +83,4 @@ rm -rf "$BUILD_DIR"
 echo "[OK] immutable release bundle: $FINAL_BUNDLE"
 echo "[OK] release bundle sha256: $BUNDLE_SHA256"
 echo "[OK] release source hash: $SOURCE_HASH"
+echo "[OK] release per-file manifest embedded"
