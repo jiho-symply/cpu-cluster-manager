@@ -173,26 +173,13 @@ run_remote_install() {
   grep -E '^\[CREDENTIAL\]' "$log" || true
 }
 
-# Two concurrent nodes keeps rollout reasonably fast without having all six
-# hosts rebuild/pull packages from the mirror at once.
-echo "[5/7] Installing/updating all computes (max concurrency: 2)"
-FAILURES=0
-for ((i=0; i<${#ENTRIES[@]}; i+=2)); do
-  pids=()
-  names=()
-  for ((j=i; j<i+2 && j<${#ENTRIES[@]}; j++)); do
-    entry="${ENTRIES[$j]}"
-    run_remote_install "$entry" &
-    pids+=("$!")
-    names+=("${entry%%@*}")
-  done
-  for k in "${!pids[@]}"; do
-    if ! wait "${pids[$k]}"; then
-      echo "[ERROR] rollout failed on ${names[$k]}" >&2
-      FAILURES=$((FAILURES + 1))
-    fi
-  done
-  [ "$FAILURES" -eq 0 ] || fail "compute rollout stopped after failure; master NODES was not expanded"
+# /home/ysadmin is shared inside each cluster. node/install-node.sh updates the
+# shared authorized_keys file, so compute installs are intentionally serialized
+# to avoid concurrent writers on the same NFS-backed file. This is slower than
+# parallel installation but removes a real state-corruption race.
+echo "[5/7] Installing/updating all computes sequentially"
+for entry in "${ENTRIES[@]}"; do
+  run_remote_install "$entry" || fail "compute rollout failed; master NODES was not expanded"
 done
 
 # Remove the unrestricted bootstrap credential before switching the manager to
