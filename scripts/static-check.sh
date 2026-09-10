@@ -9,6 +9,7 @@ cleanup() {
   if [ -n "$PROM_TEST" ]; then
     docker rm -f "$PROM_TEST" >/dev/null 2>&1 || true
   fi
+  rm -f "$ROOT/.cluster-source-state"
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -46,6 +47,15 @@ cat > "$TMP/centos-os-release" <<'EOF'
 ID=centos
 VERSION_ID="7"
 EOF
+
+echo '== shared source stamp =='
+bash scripts/write-source-state.sh "$TMP/cluster.env"
+STAMP_COMMIT="$(awk -F= '$1=="commit" {print $2; exit}' .cluster-source-state)"
+STAMP_HASH="$(awk -F= '$1=="source_hash" {print $2; exit}' .cluster-source-state)"
+CURRENT_HASH="$(bash scripts/source-hash.sh)"
+[ "$STAMP_COMMIT" = "$(git rev-parse HEAD)" ] || { echo '[ERROR] source stamp commit mismatch' >&2; exit 1; }
+[ "$STAMP_HASH" = "$CURRENT_HASH" ] || { echo '[ERROR] source stamp hash mismatch' >&2; exit 1; }
+echo "[OK] source stamp: ${STAMP_COMMIT:0:12} / ${STAMP_HASH:0:12}"
 
 echo '== target renderer: Ubuntu 20.04 =='
 mkdir -p "$TMP/targets-ubuntu"
