@@ -57,7 +57,6 @@ grep -Fq 'kept until browser page reload' "$UI" || fail 'credential lifetime hin
 echo '[OK] credentials persist across UI refreshes but not browser page reloads'
 
 echo '== action order and state-aware controls =='
-grep -Fq "const safe=\`${actionButton" "$UI" 2>/dev/null && fail 'shell interpolation unexpectedly reached UI check' || true
 grep -Fq "'logs','Logs'" "$UI" || fail 'Logs action missing'
 grep -Fq "'start','Start',false,!canStart" "$UI" || fail 'Start must be disabled unless the container is startable'
 grep -Fq "'stop','Stop',false,!running" "$UI" || fail 'Stop must be disabled when the container is not running'
@@ -85,8 +84,8 @@ done
 if grep -Fq 'confirm(' "$UI"; then fail 'browser-native confirm() must not be used'; fi
 if grep -Fq 'prompt(' "$UI"; then fail 'browser-native prompt() must not be used'; fi
 grep -Fq "if(action==='logs')" "$UI" || fail 'Logs immediate-action exception missing'
-grep -Fq "logsDialog.showModal();" "$UI" || fail 'Logs must open immediately in its dialog'
-grep -Fq "await requestConfirmation(confirmation.title" "$UI" || fail 'node mutations must await confirmation modal'
+grep -Fq 'logsDialog.showModal();' "$UI" || fail 'Logs must open immediately in its dialog'
+grep -Fq 'await requestConfirmation(confirmation.title' "$UI" || fail 'node mutations must await confirmation modal'
 grep -Fq "'Shutdown all compute nodes'" "$UI" || fail 'cluster compute shutdown must use confirmation modal'
 grep -Fq "'Shutdown master'" "$UI" || fail 'master shutdown must use confirmation modal'
 echo '[OK] every mutating control uses the shared modal; Logs opens immediately'
