@@ -91,6 +91,40 @@ if [ "$MIRROR_TEST_OUTPUT" != "$MIRROR_TEST_EXPECTED" ]; then
 fi
 echo '[OK] Korean Ubuntu mirror rewrite + single apt-get update'
 
+echo '== unified management UI policy =='
+grep -Fq 'SESSION_COOKIE = "ccm_session"' manager/app/main.py || {
+  echo '[ERROR] password-only session auth is missing' >&2
+  exit 1
+}
+grep -Fq '@app.post("/api/login")' manager/app/main.py || {
+  echo '[ERROR] password-only login endpoint is missing' >&2
+  exit 1
+}
+grep -Fq '@app.get("/auth/check")' manager/app/main.py || {
+  echo '[ERROR] gateway auth-check endpoint is missing' >&2
+  exit 1
+}
+grep -Fq 'data-view="monitoring"' manager/app/templates/index.html || {
+  echo '[ERROR] integrated Monitoring tab is missing' >&2
+  exit 1
+}
+grep -Fq '<iframe id="grafana-frame"' manager/app/templates/index.html || {
+  echo '[ERROR] embedded Grafana frame is missing' >&2
+  exit 1
+}
+grep -Fq 'auth_request /_auth;' gateway/nginx.conf || {
+  echo '[ERROR] Grafana gateway auth gate is missing' >&2
+  exit 1
+}
+grep -Fq 'location /grafana/' gateway/nginx.conf || {
+  echo '[ERROR] Grafana reverse proxy path is missing' >&2
+  exit 1
+}
+docker run --rm \
+  -v "$PWD/gateway/nginx.conf:/etc/nginx/nginx.conf:ro" \
+  nginx:1.27-alpine nginx -t >/dev/null
+echo '[OK] password-only unified Control/Monitoring gateway configuration'
+
 echo '== Python syntax =='
 python3 -m compileall -q manager/app
 
@@ -108,8 +142,9 @@ CLUSTER=cluster1
 NODES=kfai-cpu-01@192.168.100.11,kfai-cpu-02@192.168.100.12
 ADMIN_USERNAME=clusteradmin
 ADMIN_PASSWORD=ci-only-password
-UI_PORT=8080
-GRAFANA_PORT=3000
+UI_HOST=127.0.0.1
+UI_PORT=18080
+GRAFANA_PORT=13000
 EOF
 cat > "$TMP/ubuntu-os-release" <<'EOF'
 ID=ubuntu
@@ -149,7 +184,19 @@ for fn in sys.argv[1:]:
 PY
 
 echo '== Docker Compose interpolation =='
-ARCHIVE_RETENTION_SIZE=96MB docker compose --env-file "$TMP/cluster.env" config >/dev/null
+ARCHIVE_RETENTION_SIZE=96MB docker compose --env-file "$TMP/cluster.env" config > "$TMP/compose.yml"
+grep -Fq '127.0.0.1:18080' "$TMP/compose.yml" || {
+  echo '[ERROR] gateway is not bound to UI_HOST:UI_PORT' >&2
+  exit 1
+}
+grep -Fq '127.0.0.1:13000' "$TMP/compose.yml" || {
+  echo '[ERROR] Grafana diagnostic port must remain loopback-only' >&2
+  exit 1
+}
+grep -Fq 'http://127.0.0.1:18080/grafana/' "$TMP/compose.yml" || {
+  echo '[ERROR] Grafana root URL is not routed through the unified endpoint' >&2
+  exit 1
+}
 
 echo '== Prometheus config/rules =='
 docker run --rm \
