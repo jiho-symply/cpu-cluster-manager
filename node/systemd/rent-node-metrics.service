@@ -1,0 +1,8 @@
+[Unit]
+Description=Write rent-node Docker metrics for node_exporter
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rent-node-metrics /var/lib/node_exporter/textfile_collector/rent-node.prom
