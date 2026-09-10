@@ -78,9 +78,11 @@ class NodeSSH:
         return self._parse_kv(self._run("summary"))
 
     def action(self, action: str) -> str:
-        if action not in {"start", "stop", "restart", "recreate", "reset-password", "poweroff"}:
+        # `poweroff` is retained for the cluster-wide safe shutdown workflow;
+        # the browser-facing individual-node API exposes reboot instead.
+        if action not in {"start", "stop", "restart", "recreate", "reset-password", "reboot", "poweroff"}:
             raise ValueError(f"unsupported action: {action}")
-        timeout = 45 if action in {"recreate", "poweroff"} else 40
+        timeout = 45 if action in {"recreate", "reboot", "poweroff"} else 40
         return self._run(action, timeout=timeout)
 
     def poweroff_and_wait(self, timeout: int = 60) -> dict[str, str | bool]:
