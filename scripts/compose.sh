@@ -21,6 +21,7 @@ get_cfg() {
 NODES="$(get_cfg NODES)"
 [ -n "$NODES" ] || { echo "NODES is empty in $CONFIG" >&2; exit 1; }
 NODE_COUNT="$(printf '%s' "$NODES" | awk -F',' '{print NF}')"
-export ARCHIVE_RETENTION_SIZE="$((NODE_COUNT * 32))MB"
+# 32 MiB block budget per monitored host: compute nodes + the master itself.
+export ARCHIVE_RETENTION_SIZE="$(((NODE_COUNT + 1) * 32))MB"
 
 exec docker compose --env-file "$CONFIG" "$@"
