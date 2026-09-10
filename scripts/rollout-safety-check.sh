@@ -46,7 +46,7 @@ grep -Fq 'release per-file manifest missing after extraction' scripts/rollout-al
 grep -Fq 'extracted release file checksum mismatch' scripts/rollout-all-computes.sh || fail "remote per-file checksum verification missing"
 grep -Fq 'extracted release manifest hash mismatch' scripts/rollout-all-computes.sh || fail "remote canonical manifest identity check missing"
 grep -Fq 'extracted release commit mismatch' scripts/rollout-all-computes.sh || fail "remote release commit verification missing"
-grep -Fq 'remote_root="/tmp/ccm-release-' scripts/rollout-all-computes.sh || fail "compute release must be extracted to local temporary storage"
+grep -Fq 'REMOTE_ROOT="/tmp/ccm-release-' scripts/rollout-all-computes.sh || fail "compute release must be extracted to local temporary storage"
 if grep -Fq 'Waiting for shared source view to converge' scripts/rollout-all-computes.sh; then
   fail "rollout must not depend on mutable NFS source convergence"
 fi
