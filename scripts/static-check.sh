@@ -94,7 +94,9 @@ docker run --rm prom/node-exporter:v1.12.1 --version >/dev/null
 echo '== Prometheus storage flag startup =='
 PROM_TEST="ccm-prometheus-flag-test-${RANDOM}-$$"
 docker run -d --name "$PROM_TEST" \
+  -v "$PWD/monitoring/prometheus-archive/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
   prom/prometheus:v3.14.0 \
+  --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path=/prometheus \
   --storage.tsdb.wal-segment-size=10MB \
   --storage.tsdb.retention.time=5y \
