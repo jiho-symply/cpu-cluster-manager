@@ -95,7 +95,7 @@ echo '== Prometheus storage flag startup =='
 PROM_TEST="ccm-prometheus-flag-test-${RANDOM}-$$"
 docker run -d --name "$PROM_TEST" \
   prom/prometheus:v3.14.0 \
-  --storage.tsdb.path=/prometheus-test \
+  --storage.tsdb.path=/prometheus \
   --storage.tsdb.wal-segment-size=10MB \
   --storage.tsdb.retention.time=5y \
   --storage.tsdb.retention.size=64MB >/dev/null
