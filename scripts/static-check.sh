@@ -29,6 +29,19 @@ fi
 rm -f /tmp/ccm-git-c-usage.$$
 echo '[OK] no git -C dependency in runtime scripts'
 
+echo '== rent image APT policy =='
+DOCKERFILE=node/rent-image/Dockerfile
+grep -q '^ARG UBUNTU_MIRROR=http://kr.archive.ubuntu.com/ubuntu$' "$DOCKERFILE" || {
+  echo '[ERROR] rental image must default to the official Korean Ubuntu country mirror' >&2
+  exit 1
+}
+APT_UPDATE_COUNT="$(grep -c 'apt-get update' "$DOCKERFILE")"
+[ "$APT_UPDATE_COUNT" -eq 1 ] || {
+  echo "[ERROR] rental image must run apt-get update once, found $APT_UPDATE_COUNT" >&2
+  exit 1
+}
+echo '[OK] Korean Ubuntu mirror + single apt-get update'
+
 echo '== Python syntax =='
 python3 -m compileall -q manager/app
 
