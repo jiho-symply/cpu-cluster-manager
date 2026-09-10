@@ -37,6 +37,10 @@ touch "$KNOWN_HOSTS"
 chmod 600 "$KEY" "$KNOWN_HOSTS"
 chmod 644 "${KEY}.pub"
 
+# Use explicit management-IP ED25519 entries. These are private management
+# endpoints, so hashing adds no useful secrecy here and made cross-version
+# OpenSSH diagnostics unnecessarily opaque. Existing hashed/other-key entries
+# are preserved; one exact plaintext ED25519 entry is guaranteed per node.
 IFS=',' read -r -a ENTRIES <<< "$NODES_SPEC"
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
@@ -46,27 +50,26 @@ for entry in "${ENTRIES[@]}"; do
     exit 2
   }
 
-  HOST_KEYS="$(ssh-keygen -F "$host" -f "$KNOWN_HOSTS" 2>/dev/null || true)"
-  if printf '%s\n' "$HOST_KEYS" | grep -q ' ssh-ed25519 '; then
-    echo "[KEEP] trusted ED25519 host key already exists: $name ($host)"
+  if awk -v h="$host" '$1 == h && $2 == "ssh-ed25519" {found=1} END {exit !found}' "$KNOWN_HOSTS"; then
+    echo "[KEEP] explicit ED25519 host key already exists: $name ($host)"
     continue
   fi
 
-  if [ -n "$HOST_KEYS" ]; then
-    echo "[ADD] trusted host exists but ED25519 key is missing; scanning: $name ($host)"
-  else
-    echo "[ADD] scanning SSH host key: $name ($host)"
-  fi
-
-  SCANNED="$(ssh-keyscan -T 5 -p 22 -H -t ed25519 "$host" 2>/dev/null || true)"
+  echo "[ADD] scanning explicit ED25519 SSH host key: $name ($host)"
+  SCANNED="$(ssh-keyscan -T 5 -p 22 -t ed25519 "$host" 2>/dev/null || true)"
   if [ -z "$SCANNED" ]; then
     echo "[ERROR] could not scan ED25519 SSH host key: $name ($host)" >&2
     exit 2
   fi
   printf '%s\n' "$SCANNED" >> "$KNOWN_HOSTS"
+
+  if ! awk -v h="$host" '$1 == h && $2 == "ssh-ed25519" {found=1} END {exit !found}' "$KNOWN_HOSTS"; then
+    echo "[ERROR] explicit ED25519 key was not recorded for $name ($host)" >&2
+    exit 2
+  fi
 done
 
 echo "[OK] manager key: $KEY"
 echo "[OK] public key : ${KEY}.pub"
 echo "[OK] known_hosts: $KNOWN_HOSTS"
-echo "[SECURITY] manager SSH state is host-local; existing host keys are preserved and missing ED25519 keys are added"
+echo "[SECURITY] manager SSH state is host-local; explicit ED25519 management-IP keys are preserved/added"
