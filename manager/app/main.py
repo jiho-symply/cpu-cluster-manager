@@ -18,6 +18,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
+from .live_metrics import collect_live_metrics
 from .ssh_client import Node, NodeSSH
 
 APP_DIR = Path(__file__).resolve().parent
@@ -149,6 +150,17 @@ def collect_local_nodes() -> list[dict]:
         futures = {pool.submit(collect_summary, node): node for node in NODES}
         for future in as_completed(futures):
             results.append(future.result())
+
+    # Monitoring is advisory for the control table. Merge one current
+    # Prometheus snapshot after the SSH summaries so a temporary metrics gap
+    # never disables container controls.
+    live = collect_live_metrics()
+    for item in results:
+        metrics = live.get(str(item["name"]), {})
+        item["cpu_percent"] = metrics.get("cpu_percent")
+        item["memory_percent"] = metrics.get("memory_percent")
+        item["disk_percent"] = metrics.get("disk_percent")
+
     order = {node.name: i for i, node in enumerate(NODES)}
     results.sort(key=lambda item: order.get(str(item["name"]), 9999))
     return results
