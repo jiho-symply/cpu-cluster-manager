@@ -1,6 +1,7 @@
 cluster.local.env
 .cluster-source-state
 .cluster-source-state.*
+.cluster-manager.pub
 monitoring/targets/*.json
 !monitoring/targets/.gitkeep
 __pycache__/
