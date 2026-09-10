@@ -63,8 +63,30 @@ build_account_uid() {
 }
 
 new_password() {
-  # 128 bits of entropy represented as 32 lowercase hex characters; no shell-sensitive characters.
-  od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+  # Exactly 8 alphanumeric characters. Rejection sampling keeps A-Z/a-z/0-9
+  # uniform and repeats until all three character classes are represented.
+  local password
+  while :; do
+    password="$(
+      od -An -N64 -tu1 /dev/urandom | awk '
+        BEGIN { chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"; out="" }
+        {
+          for (i=1; i<=NF && length(out)<8; i++) {
+            # 248 is the largest multiple of 62 below 256; reject 248..255
+            # to avoid modulo bias.
+            if ($i < 248) out = out substr(chars, ($i % 62) + 1, 1)
+          }
+        }
+        END { print out }
+      '
+    )"
+    [ "${#password}" -eq 8 ] || continue
+    [[ "$password" =~ [A-Z] ]] || continue
+    [[ "$password" =~ [a-z] ]] || continue
+    [[ "$password" =~ [0-9] ]] || continue
+    printf '%s\n' "$password"
+    return 0
+  done
 }
 
 ACCOUNT="$(build_account_name)"
