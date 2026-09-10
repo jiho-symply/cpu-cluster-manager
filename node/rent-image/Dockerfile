@@ -3,28 +3,30 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Seoul
 
-RUN printf 'Acquire::Retries "10";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Queue-Mode "access";\n' >/etc/apt/apt.conf.d/80-retries && \
+# Both production clusters are in Korea. Use Ubuntu's official Korean country
+# mirror to avoid poor international routing to archive/security.ubuntu.com.
+# Keep the mirror as a build ARG so it can still be overridden explicitly.
+ARG UBUNTU_MIRROR=http://kr.archive.ubuntu.com/ubuntu
+
+RUN sed -ri "s|https?://(archive|security)\.ubuntu\.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
+    printf 'Acquire::Retries "5";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\nAcquire::Queue-Mode "access";\n' >/etc/apt/apt.conf.d/80-retries && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-      apt-utils debconf locales tzdata ca-certificates && \
-    sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
-    locale-gen en_US.UTF-8 && \
-    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 && \
-    rm -rf /var/lib/apt/lists/*
-
-ENV LANG=en_US.UTF-8
-ENV LC_ALL=en_US.UTF-8
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+      apt-utils debconf locales tzdata ca-certificates \
       openssh-server sudo passwd \
       curl wget git vim nano tmux htop tree less rsync unzip zip jq file \
       bash-completion procps psmisc lsof net-tools iproute2 iputils-ping dnsutils \
       python3 python3-pip python3-venv python3-dev \
       build-essential gcc g++ make cmake pkg-config gdb \
       software-properties-common apt-transport-https && \
+    sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    locale-gen en_US.UTF-8 && \
+    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 && \
     mkdir -p /var/run/sshd /persist/ssh /persist/auth /workspace && \
     rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 RUN groupadd -g 1001 admin && \
     groupadd -g 1002 ysadmin && \
