@@ -22,7 +22,6 @@ services:
       - no-new-privileges:true
 
   cluster-manager:
-    image: cpu-cluster-manager-app:local
     build:
       context: ./manager
     container_name: cpu-cluster-manager
@@ -94,7 +93,8 @@ services:
       - prometheus-hot
 
   prometheus-router:
-    image: cpu-cluster-manager-app:local
+    build:
+      context: ./manager
     container_name: cpu-cluster-prometheus-router
     restart: unless-stopped
     command: ["uvicorn", "app.prometheus_router:app", "--host", "0.0.0.0", "--port", "8080"]
