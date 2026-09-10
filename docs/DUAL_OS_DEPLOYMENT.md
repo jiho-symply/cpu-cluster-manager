@@ -1,58 +1,78 @@
 # Dual-OS deployment notes
 
-지원 대상:
+## Validated hosts
 
-- Cluster 1: Ubuntu 20.04
-- Cluster 2: CentOS 7
+- Cluster 1: Ubuntu 20.04.2, kernel 5.15, Docker 20.10.x, Compose 2.6.0
+- Cluster 2: CentOS 7, kernel 3.10.0-1160, Docker 20.10.17, Compose 2.6.0
 - Host admin account: existing `ysadmin`
-- Rent environment: Ubuntu 22.04 `rent-node` Docker container
+- Rent environment: Ubuntu 22.04 `rent-node`
 
-## Common contract
+Prometheus 3.14.0, Alertmanager 0.34.0, Grafana 13.2.1 and Python 3.12 Bookworm images were smoke-tested on both masters. Ubuntu 22.04 container execution and `:Z` bind mounts were smoke-tested on representative compute nodes.
 
-두 OS 모두 같은 installer를 사용한다. OS별 차이는 `scripts/preflight.sh`와 SELinux-compatible bind mount가 흡수한다.
+## Private management networks
 
-Compute node는 native `node_exporter` + textfile collector를 사용한다. cAdvisor를 쓰지 않으므로 CentOS 7의 cgroup/privileged-container 예외를 피한다.
+Use private management IPs in `cluster.local.env`:
 
-## Preconditions
+```text
+Cluster 1: 192.168.100.x
+Cluster 2: 172.20.x.x
+```
 
-Installer가 자동으로 만들지 않는 인프라 조건:
+Master→representative-compute ICMP and TCP/22 were validated on these paths. Prometheus also uses the same private IPs for TCP/9100.
 
-1. 동작 중인 Docker Engine
-2. `ysadmin` host account
-3. master→compute TCP/22, TCP/9100 network reachability
-4. master의 실제 `config/nodes.yaml`
-5. master-generated SSH public key의 compute-node 전달
-6. outbound access required for first-time image/package download (Ubuntu archive and GitHub node_exporter release)
+Renter account naming is intentionally independent of this management address. Existing `engclusterXXX` accounts follow the default-route/public service IPv4 last octet, and the rent scripts retain that behavior.
 
-Installer는 Docker Engine, host firewall, iptables, firewalld를 자동 upgrade/reconfigure하지 않는다.
+## Single operator-managed file
 
-## Master
+Each master has exactly one manually managed local config/secret file:
+
+```text
+cluster.local.env
+```
+
+It contains:
+
+```dotenv
+CLUSTER=cluster1
+NODES=kfai-cpu-01@192.168.100.11,...
+ADMIN_USERNAME=clusteradmin
+ADMIN_PASSWORD=<generated>
+UI_PORT=8080
+GRAFANA_PORT=3000
+```
+
+No `.env`, `nodes.yaml`, or hand-written Prometheus target JSON is required. Generated target JSON is an implementation artifact only.
+
+SSH private keys, known_hosts, renter auth DB, SSH host keys, and Prometheus TSDB are automatically managed runtime state and are not embedded into the env file.
+
+## Master install
 
 ```bash
 git clone https://github.com/jiho-symply/cpu-cluster-manager.git
 cd cpu-cluster-manager
 git checkout dual-os-support
-cp config/nodes.example.yaml config/nodes.yaml
-# Cluster 2: config/nodes.cluster2.example.yaml 사용
-# 실제 host 값 수정
-bash scripts/install-master.sh config/nodes.yaml
+bash scripts/install-master.sh
 ```
 
-Master installer는 host Python에 의존하지 않는다. Compose plugin/standalone이 없으면 `docker/compose:1.29.2` ephemeral client를 사용한다.
-
-첫 실행 시 `.env` mode 600을 만들고 default admin password를 random 32-hex password로 교체한다.
-
-SSH `known_hosts`는 재설치 시 비우지 않는다. 이미 신뢰한 host key가 변경되면 `StrictHostKeyChecking`이 실패하게 두며 자동 수용하지 않는다.
-
-## Compute
-
-Master에서:
+First run creates `cluster.local.env`, autodetects `cluster1` on the Ubuntu master or `cluster2` on the CentOS master, and exits. Edit `NODES=` with all compute private management IPs, then:
 
 ```bash
-scp ~/.ssh/cluster-manager_ed25519.pub ysadmin@<NODE_IP>:/tmp/cluster-manager_ed25519.pub
+bash scripts/install-master.sh
 ```
 
-Compute node에서:
+If `ADMIN_PASSWORD` is blank, a random password is written back to the same mode-600 file.
+
+The installer does not replace Docker Engine or modify site firewall/iptables policy.
+
+## Compute install
+
+Copy only the corresponding master's public key:
+
+```bash
+scp ~/.ssh/cluster-manager_ed25519.pub ysadmin@<COMPUTE_PRIVATE_IP>:/tmp/cluster-manager_ed25519.pub
+```
+
+Then on the compute node:
 
 ```bash
 git clone https://github.com/jiho-symply/cpu-cluster-manager.git
@@ -62,59 +82,70 @@ sudo bash node/install-node.sh /tmp/cluster-manager_ed25519.pub
 rm -f /tmp/cluster-manager_ed25519.pub
 ```
 
-Fresh install은 rent image build, `/src/rent` 초기화, `rent-node` 생성, random renter temporary password 발급, monitoring 설치까지 수행한다.
+The compute installer treats Git as authoritative for:
 
-재실행은 기존 `rent-node`, `/src/rent`, renter password를 보존한다.
+- `/src/rent/image` deployed source
+- `/usr/local/sbin/cluster-node-admin`
+- `/usr/local/bin/cluster-node-ssh`
+- `/usr/local/bin/rent-node-metrics`
+- `/etc/sudoers.d/cpu-cluster-manager`
+- monitoring systemd units
 
-CentOS/RHEL SELinux enforcing 환경을 위해 rent persistent bind mount는 `:Z`를 사용한다.
+Persistent `/src/rent/home`, `/src/rent/work`, `/src/rent/auth`, `/src/rent/ssh` are never treated as Git content.
 
-## Monitoring
+Existing `rent-node` is preserved. If `node/rent-image` changed in Git, its tree SHA changes and the Docker image is rebuilt with that SHA as an image label; the running container is not automatically recreated.
 
-Compute node:
-
-- node_exporter v1.12.1 static binary
-- release SHA256 검증
-- systemd service
-- 30초 timer가 `docker stats --no-stream rent-node`를 textfile metric으로 기록
-- TCP/9100 only
+## Updates
 
 Master:
 
-- Hot Prometheus: 30s, 30d
-- Archive Prometheus: 5m aggregate min/avg/max, max 5y
-- Grafana automatic `$__interval`
-- disk alert only
+```bash
+bash scripts/update-master.sh
+```
 
-Archive는 18 series/node를 유지하며 persistent block cap은 32 MB/node다. Archive WAL segment는 8 MB로 축소한다. 이 설정은 `<100 MB/node`를 목표로 하지만 compaction/head/WAL 순간 overhead까지 strict hard quota로 보장하지는 않는다.
+Compute:
+
+```bash
+bash node/update-node.sh
+```
+
+Both use `git pull --ff-only` and refuse tracked local modifications. There is no Git tag/release workflow; deployed state records the exact commit SHA.
 
 ## Verification
 
-모든 compute node 설치 후 master에서:
+Compute:
 
 ```bash
-bash scripts/verify-cluster.sh config/nodes.yaml
+bash node/verify-node.sh
 ```
 
-이 검증이 통과한 뒤 운영 전환한다.
+Whole cluster from master:
 
-## OS caveats
+```bash
+bash scripts/verify-cluster.sh
+```
 
-### Ubuntu 20.04
+Deployment metadata:
 
-현재 Docker package support 범위 밖이므로 installer가 Docker를 교체하지 않는다. 기존 Docker가 정상 동작해야 한다.
+```bash
+cat /var/lib/cpu-cluster-manager/deployed-version
+```
 
-### CentOS 7
+## Monitoring contract
 
-EOL이며 current Docker CE package 대상이 아니다. 기존 Docker/kernel을 그대로 사용하고 preflight 결과를 확인한다. 매우 오래된 3.10 kernel은 경고한다.
+Compute node:
 
-실제 Docker Engine 버전이 충분히 오래된 경우 최신 Prometheus/Grafana container image가 실행되지 않을 수 있으므로, 최초 배포는 각 cluster에서 compute 1대 + master 1대 pilot으로 검증해야 한다.
+- native node_exporter v1.12.1
+- SHA256 verification
+- source-controlled systemd unit
+- 30-second source-controlled timer collecting `docker stats rent-node`
+- TCP/9100 on private management network
 
-## Turn-key definition
+Master:
 
-`main`에 이 branch가 merge된 이후에는 installer 관점에서:
+- Prometheus Hot: 30s / 30d
+- Prometheus Archive: 5m min/avg/max / max 5y
+- Grafana automatic `$__interval`
+- disk-capacity alerts only
 
-- master: inventory 작성 후 `bash scripts/install-master.sh`
-- compute: public key 전달 후 `sudo bash node/install-node.sh`
-- master: `bash scripts/verify-cluster.sh`
-
-세 단계가 최종 운영 절차다.
+Archive stores 18 series per compute node with a persistent-block cap of 32 MB/node and an 8 MB WAL segment. This is designed to remain comfortably below the requested 100 MB/node archive budget under normal operation, while acknowledging transient Prometheus head/WAL/compaction overhead.
