@@ -71,13 +71,16 @@ if [ "$PLATFORM" = "centos7" ]; then
 fi
 
 if [ "$ROLE" = "master" ] || [ "$ROLE" = "all" ]; then
-  need_cmds curl ssh-keygen ssh-keyscan
+  need_cmds curl ssh-keygen ssh-keyscan git
+  if docker inspect rent-node >/dev/null 2>&1; then
+    fail "rent-node exists on this host; refusing master installation on a compute-like node"
+  fi
   docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 plugin is required on master"
   say "Compose" "$(docker compose version --short 2>/dev/null || docker compose version)"
 fi
 
 if [ "$ROLE" = "compute" ] || [ "$ROLE" = "all" ]; then
-  need_cmds curl tar sha256sum useradd visudo ss
+  need_cmds curl tar sha256sum useradd visudo ss git
   RENT_STATE="$(docker inspect -f '{{.State.Status}}' rent-node 2>/dev/null || echo missing)"
   say "rent-node" "$RENT_STATE"
 fi
