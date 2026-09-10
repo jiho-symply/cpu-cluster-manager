@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
+import socket
+import threading
 import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -19,9 +25,12 @@ CLUSTER = os.environ.get("CLUSTER", "").strip()
 NODES_SPEC = os.environ.get("NODES", "").strip()
 SSH_USER = os.environ.get("SSH_USER", "ysadmin").strip() or "ysadmin"
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
-GRAFANA_BASE_URL = os.environ.get("GRAFANA_BASE_URL", "/grafana").rstrip("/") or "/grafana"
+PEER_CLUSTER = os.environ.get("PEER_CLUSTER", "").strip()
+PEER_URL = os.environ.get("PEER_URL", "").strip().rstrip("/")
+MASTER_CONTROL_SOCKET = os.environ.get("MASTER_CONTROL_SOCKET", "/run/master-control.sock")
 SESSION_COOKIE = "ccm_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
+PEER_HEADER = "X-CCM-Peer-Token"
 
 if not CLUSTER:
     raise RuntimeError("CLUSTER must be set")
@@ -29,11 +38,16 @@ if not NODES_SPEC:
     raise RuntimeError("NODES must be set")
 if not ADMIN_PASSWORD:
     raise RuntimeError("ADMIN_PASSWORD must be set")
+if PEER_URL and not PEER_CLUSTER:
+    raise RuntimeError("PEER_CLUSTER must be set when PEER_URL is configured")
 
 SESSION_KEY = hashlib.sha256(("cpu-cluster-manager:" + ADMIN_PASSWORD).encode()).digest()
 
 app = FastAPI(title="CPU Cluster Manager", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+
+_shutdown_lock = threading.Lock()
+_shutdown_confirmed: set[str] = set()
 
 
 def parse_nodes(spec: str) -> list[Node]:
@@ -93,8 +107,17 @@ def session_valid(request: Request) -> bool:
     return secrets.compare_digest(signature, _session_signature(timestamp))
 
 
+def peer_valid(request: Request) -> bool:
+    token = request.headers.get(PEER_HEADER, "")
+    return bool(token) and secrets.compare_digest(token.encode(), ADMIN_PASSWORD.encode())
+
+
+def request_authenticated(request: Request) -> bool:
+    return session_valid(request) or peer_valid(request)
+
+
 def require_admin(request: Request) -> str:
-    if not session_valid(request):
+    if not request_authenticated(request):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     return "admin"
 
@@ -120,6 +143,121 @@ def collect_summary(node: Node) -> dict[str, str | bool | int]:
         }
 
 
+def collect_local_nodes() -> list[dict]:
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(NODES)))) as pool:
+        futures = {pool.submit(collect_summary, node): node for node in NODES}
+        for future in as_completed(futures):
+            results.append(future.result())
+    order = {node.name: i for i, node in enumerate(NODES)}
+    results.sort(key=lambda item: order.get(str(item["name"]), 9999))
+    return results
+
+
+def local_cluster_payload() -> dict:
+    return {
+        "cluster": CLUSTER,
+        "reachable": True,
+        "local": True,
+        "grafana_base": f"/{CLUSTER}/grafana",
+        "nodes": collect_local_nodes(),
+    }
+
+
+def _peer_json(path: str, method: str = "GET", timeout: int = 15) -> dict:
+    if not PEER_URL:
+        raise RuntimeError("peer cluster is not configured")
+    url = f"{PEER_URL}{path}"
+    data = b"" if method != "GET" else None
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={"Accept": "application/json", PEER_HEADER: ADMIN_PASSWORD},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"{PEER_CLUSTER}: HTTP {exc.code}: {detail}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(f"{PEER_CLUSTER}: {exc}") from exc
+    return json.loads(payload) if payload else {}
+
+
+def _cluster_is_local(cluster: str) -> bool:
+    if cluster == CLUSTER:
+        return True
+    if PEER_URL and cluster == PEER_CLUSTER:
+        return False
+    raise HTTPException(status_code=404, detail=f"Unknown cluster: {cluster}")
+
+
+def _mark_shutdown_confirmed(name: str, confirmed: bool) -> None:
+    with _shutdown_lock:
+        if confirmed:
+            _shutdown_confirmed.add(name)
+        else:
+            _shutdown_confirmed.discard(name)
+
+
+def _shutdown_one(node: Node) -> dict:
+    try:
+        result = NodeSSH(node).poweroff_and_wait(timeout=60)
+        if bool(result.get("offline")):
+            _mark_shutdown_confirmed(node.name, True)
+        return result
+    except Exception as exc:
+        _mark_shutdown_confirmed(node.name, False)
+        return {"node": node.name, "ok": False, "offline": False, "detail": str(exc)}
+
+
+def shutdown_local_computes() -> dict:
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(NODES)))) as pool:
+        futures = {pool.submit(_shutdown_one, node): node for node in NODES}
+        for future in as_completed(futures):
+            results.append(future.result())
+    order = {node.name: i for i, node in enumerate(NODES)}
+    results.sort(key=lambda item: order.get(str(item["node"]), 9999))
+    all_offline = all(bool(item.get("offline")) for item in results)
+    return {"ok": all_offline, "cluster": CLUSTER, "all_offline": all_offline, "nodes": results}
+
+
+def master_shutdown_state() -> dict:
+    online: list[str] = []
+    for node in NODES:
+        if NodeSSH(node).is_online(timeout=1.0):
+            online.append(node.name)
+    with _shutdown_lock:
+        unconfirmed = [node.name for node in NODES if node.name not in _shutdown_confirmed]
+    return {
+        "ready": not online and not unconfirmed,
+        "online": online,
+        "unconfirmed": unconfirmed,
+    }
+
+
+def master_control(action: str) -> str:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(4)
+    try:
+        sock.connect(MASTER_CONTROL_SOCKET)
+        sock.sendall((action + "\n").encode())
+        chunks = bytearray()
+        while b"\n" not in chunks and len(chunks) < 4096:
+            chunk = sock.recv(1024)
+            if not chunk:
+                break
+            chunks.extend(chunk)
+        return bytes(chunks).decode("utf-8", errors="replace").strip()
+    except OSError as exc:
+        raise RuntimeError(f"master control socket failed: {exc}") from exc
+    finally:
+        sock.close()
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -127,7 +265,7 @@ def healthz() -> dict[str, str]:
 
 @app.get("/auth/check")
 def auth_check(request: Request) -> Response:
-    return Response(status_code=204 if session_valid(request) else 401)
+    return Response(status_code=204 if request_authenticated(request) else 401)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -174,34 +312,34 @@ def index(request: Request):
         name="index.html",
         context={
             "cluster": CLUSTER,
-            "node_count": len(NODES),
-            "grafana_base_url": GRAFANA_BASE_URL,
+            "federated": bool(PEER_URL),
         },
     )
 
 
+# Local-only API. Cluster 1 uses these endpoints on Cluster 2 with the peer token.
 @app.get("/api/nodes")
 def api_nodes(_: str = Depends(require_admin)) -> JSONResponse:
-    results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=min(8, max(1, len(NODES)))) as pool:
-        futures = {pool.submit(collect_summary, node): node for node in NODES}
-        for future in as_completed(futures):
-            results.append(future.result())
-
-    order = {node.name: i for i, node in enumerate(NODES)}
-    results.sort(key=lambda item: order.get(str(item["name"]), 9999))
-    return JSONResponse({"cluster": CLUSTER, "nodes": results})
+    return JSONResponse({"cluster": CLUSTER, "nodes": collect_local_nodes()})
 
 
 @app.post("/api/nodes/{name}/{action}")
 def node_action(name: str, action: str, _: str = Depends(require_admin)) -> JSONResponse:
-    allowed = {"start", "stop", "restart", "recreate", "reset-password"}
+    allowed = {"start", "stop", "restart", "recreate", "reset-password", "poweroff"}
     if action not in allowed:
         raise HTTPException(status_code=400, detail=f"Unsupported action: {action}")
 
     node = get_node(name)
     try:
+        if action == "poweroff":
+            result = _shutdown_one(node)
+            if not result.get("ok"):
+                raise HTTPException(status_code=502, detail=str(result.get("detail", "poweroff failed")))
+            return JSONResponse({"ok": True, "node": name, "action": action, "result": result})
         output = NodeSSH(node).action(action)
+        _mark_shutdown_confirmed(name, False)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return JSONResponse({"ok": True, "node": name, "action": action, "output": output})
@@ -215,3 +353,125 @@ def node_logs(name: str, _: str = Depends(require_admin)) -> PlainTextResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return PlainTextResponse(output)
+
+
+@app.post("/api/shutdown/computes")
+def api_shutdown_computes(_: str = Depends(require_admin)) -> JSONResponse:
+    return JSONResponse(shutdown_local_computes())
+
+
+@app.get("/api/shutdown/state")
+def api_shutdown_state(_: str = Depends(require_admin)) -> JSONResponse:
+    return JSONResponse({"cluster": CLUSTER, **master_shutdown_state()})
+
+
+@app.post("/api/shutdown/master")
+def api_shutdown_master(_: str = Depends(require_admin)) -> JSONResponse:
+    state = master_shutdown_state()
+    if not state["ready"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "all compute nodes must be confirmed offline before master shutdown",
+                **state,
+            },
+        )
+    try:
+        output = master_control("poweroff")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "cluster": CLUSTER, "poweroff_requested": True, "output": output})
+
+
+# Browser-facing federated API. On Cluster 1 this includes Cluster 2; on Cluster 2
+# it naturally degrades to the local cluster only.
+@app.get("/api/clusters")
+def api_clusters(_: str = Depends(require_admin)) -> JSONResponse:
+    clusters = [local_cluster_payload()]
+    if PEER_URL:
+        try:
+            peer = _peer_json("/api/nodes", timeout=15)
+            clusters.append(
+                {
+                    "cluster": str(peer.get("cluster") or PEER_CLUSTER),
+                    "reachable": True,
+                    "local": False,
+                    "grafana_base": f"/{PEER_CLUSTER}/grafana",
+                    "nodes": list(peer.get("nodes") or []),
+                }
+            )
+        except Exception as exc:
+            clusters.append(
+                {
+                    "cluster": PEER_CLUSTER,
+                    "reachable": False,
+                    "local": False,
+                    "grafana_base": f"/{PEER_CLUSTER}/grafana",
+                    "nodes": [],
+                    "error": str(exc),
+                }
+            )
+    return JSONResponse({"primary": CLUSTER, "federated": bool(PEER_URL), "clusters": clusters})
+
+
+@app.post("/api/clusters/{cluster}/nodes/{name}/{action}")
+def cluster_node_action(cluster: str, name: str, action: str, _: str = Depends(require_admin)) -> JSONResponse:
+    if _cluster_is_local(cluster):
+        return node_action(name, action, "admin")
+    try:
+        payload = _peer_json(
+            f"/api/nodes/{quote(name, safe='')}/{quote(action, safe='')}",
+            method="POST",
+            timeout=75 if action == "poweroff" else 45,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse(payload)
+
+
+@app.get("/api/clusters/{cluster}/nodes/{name}/logs", response_class=PlainTextResponse)
+def cluster_node_logs(cluster: str, name: str, _: str = Depends(require_admin)) -> PlainTextResponse:
+    if _cluster_is_local(cluster):
+        return node_logs(name, "admin")
+    if not PEER_URL:
+        raise HTTPException(status_code=404, detail="peer cluster is not configured")
+    url = f"{PEER_URL}/api/nodes/{quote(name, safe='')}/logs"
+    request = urllib.request.Request(url, headers={PEER_HEADER: ADMIN_PASSWORD})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return PlainTextResponse(response.read().decode("utf-8", errors="replace"))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"{PEER_CLUSTER}: {exc}") from exc
+
+
+@app.post("/api/clusters/{cluster}/shutdown/computes")
+def cluster_shutdown_computes(cluster: str, _: str = Depends(require_admin)) -> JSONResponse:
+    if _cluster_is_local(cluster):
+        return JSONResponse(shutdown_local_computes())
+    try:
+        payload = _peer_json("/api/shutdown/computes", method="POST", timeout=90)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse(payload)
+
+
+@app.get("/api/clusters/{cluster}/shutdown/state")
+def cluster_shutdown_state(cluster: str, _: str = Depends(require_admin)) -> JSONResponse:
+    if _cluster_is_local(cluster):
+        return JSONResponse({"cluster": CLUSTER, **master_shutdown_state()})
+    try:
+        payload = _peer_json("/api/shutdown/state", timeout=15)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse(payload)
+
+
+@app.post("/api/clusters/{cluster}/shutdown/master")
+def cluster_shutdown_master(cluster: str, _: str = Depends(require_admin)) -> JSONResponse:
+    if _cluster_is_local(cluster):
+        return api_shutdown_master("admin")
+    try:
+        payload = _peer_json("/api/shutdown/master", method="POST", timeout=10)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse(payload)
