@@ -20,12 +20,17 @@ fi
 bash ./scripts/preflight.sh master
 
 ADMIN_GROUP="$(id -gn "$ADMIN_USER")"
+NEED_STATE_MIGRATION=0
 if [ ! -d "$STATE_DIR" ] || [ "$(stat -c %U "$STATE_DIR" 2>/dev/null || true)" != "$ADMIN_USER" ]; then
-  echo "[INFO] creating host-local master state directory (sudo may prompt once)"
-  sudo install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_GROUP" "$STATE_DIR"
+  NEED_STATE_MIGRATION=1
 fi
 if [ ! -d "$SSH_DIR" ] || [ "$(stat -c %U "$SSH_DIR" 2>/dev/null || true)" != "$ADMIN_USER" ]; then
-  sudo install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_GROUP" "$SSH_DIR"
+  NEED_STATE_MIGRATION=1
+fi
+if [ "$NEED_STATE_MIGRATION" -eq 1 ]; then
+  echo "[INFO] preparing host-local master state directory (sudo may prompt once)"
+  sudo install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_GROUP" "$STATE_DIR" "$SSH_DIR"
+  sudo chown -R "$ADMIN_USER:$ADMIN_GROUP" "$STATE_DIR"
 fi
 chmod 0700 "$STATE_DIR" "$SSH_DIR"
 
@@ -182,7 +187,6 @@ done
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh ps
 bash ./scripts/write-deploy-state.sh master "$CONFIG"
 
-# Remove legacy copies only after the host-local key/config are active and services are stable.
 rm -f "$LEGACY_KEY" "${LEGACY_KEY}.pub" "$LEGACY_KNOWN_HOSTS"
 rm -f "$HOME/.local/state/cpu-cluster-manager/deployed-version" 2>/dev/null || true
 
