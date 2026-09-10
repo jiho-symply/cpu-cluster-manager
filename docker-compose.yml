@@ -63,7 +63,7 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=5y
       - --storage.tsdb.retention.size=${ARCHIVE_RETENTION_SIZE:?computed by scripts/compose.sh}
-      - --storage.tsdb.wal-segment-size=8MB
+      - --storage.tsdb.wal-segment-size=10MB
     volumes:
       - ./monitoring/prometheus-archive/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_archive_data:/prometheus
