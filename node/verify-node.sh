@@ -40,6 +40,13 @@ fi
 check_active node-exporter.service
 check_active rent-node-metrics.timer
 
+if grep -q '^OnUnitActiveSec=5s$' /etc/systemd/system/rent-node-metrics.timer 2>/dev/null; then
+  echo "[OK] rent-node metrics cadence: 5s"
+else
+  echo "[FAIL] rent-node metrics timer is not configured for 5s" >&2
+  FAIL=1
+fi
+
 METRICS="$(curl -fsS http://127.0.0.1:9100/metrics 2>/dev/null || true)"
 if grep -q '^cluster_rent_container_' <<<"$METRICS"; then
   echo "[OK] node_exporter custom rent metrics"
