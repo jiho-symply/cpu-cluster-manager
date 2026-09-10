@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG="${1:-cluster.local.env}"
-KEY="${2:-$HOME/.ssh/cluster-manager_ed25519}"
-KNOWN_HOSTS="${3:-$HOME/.ssh/cluster-manager_known_hosts}"
+CONFIG="${1:-/var/lib/cpu-cluster-manager/cluster.local.env}"
+KEY="${2:-/var/lib/cpu-cluster-manager/ssh/cluster-manager_ed25519}"
+KNOWN_HOSTS="${3:-/var/lib/cpu-cluster-manager/ssh/cluster-manager_known_hosts}"
+LEGACY_KEY="$HOME/.ssh/cluster-manager_ed25519"
+LEGACY_KNOWN_HOSTS="$HOME/.ssh/cluster-manager_known_hosts"
+
 [ -f "$CONFIG" ] || { echo "cluster config not found: $CONFIG" >&2; exit 1; }
 
 get_cfg() {
@@ -15,6 +18,17 @@ NODES_SPEC="$(get_cfg NODES)"
 
 mkdir -p "$(dirname "$KEY")" "$(dirname "$KNOWN_HOSTS")"
 chmod 700 "$(dirname "$KEY")"
+
+if [ ! -f "$KEY" ] && [ -f "$LEGACY_KEY" ] && [ "$LEGACY_KEY" != "$KEY" ]; then
+  install -m 0600 "$LEGACY_KEY" "$KEY"
+  [ -f "${LEGACY_KEY}.pub" ] && install -m 0644 "${LEGACY_KEY}.pub" "${KEY}.pub"
+  echo "[MIGRATE] copied manager key from shared home to host-local state"
+fi
+if [ ! -f "$KNOWN_HOSTS" ] && [ -f "$LEGACY_KNOWN_HOSTS" ] && [ "$LEGACY_KNOWN_HOSTS" != "$KNOWN_HOSTS" ]; then
+  install -m 0600 "$LEGACY_KNOWN_HOSTS" "$KNOWN_HOSTS"
+  echo "[MIGRATE] copied known_hosts from shared home to host-local state"
+fi
+
 if [ ! -f "$KEY" ]; then
   ssh-keygen -t ed25519 -f "$KEY" -N '' -C 'cpu-cluster-manager'
 fi
@@ -45,4 +59,4 @@ done
 echo "[OK] private key: $KEY"
 echo "[OK] public key : ${KEY}.pub"
 echo "[OK] known_hosts: $KNOWN_HOSTS"
-echo "[SECURITY] existing host keys are preserved; changed keys fail StrictHostKeyChecking"
+echo "[SECURITY] manager SSH state is host-local; existing host keys are preserved"
