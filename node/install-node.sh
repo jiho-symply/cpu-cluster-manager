@@ -17,25 +17,34 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SOURCE_STATE="$ROOT/.cluster-source-state"
 bash "$ROOT/scripts/preflight.sh" compute
 
-repo_git() {
-  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    sudo -u "$SUDO_USER" git -C "$ROOT" "$@"
-  else
-    git -C "$ROOT" "$@"
-  fi
-}
-
-DEPLOY_COMMIT="$(repo_git rev-parse HEAD 2>/dev/null)" || {
-  echo "[ERROR] cannot resolve Git commit from $ROOT; refusing an untraceable deployment" >&2
+[ -f "$SOURCE_STATE" ] || {
+  echo "[ERROR] shared source stamp missing: $SOURCE_STATE" >&2
+  echo "        run the master installer/update first" >&2
   exit 3
 }
-RENT_TREE_SHA="$(repo_git rev-parse HEAD:node/rent-image 2>/dev/null)" || {
-  echo "[ERROR] cannot resolve Git tree for node/rent-image; refusing deployment" >&2
-  exit 3
+get_source() {
+  local key="$1"
+  awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$SOURCE_STATE"
 }
+DEPLOY_COMMIT="$(get_source commit)"
+RENT_TREE_SHA="$(get_source rent_tree_sha)"
+STAMPED_SOURCE_HASH="$(get_source source_hash)"
+[[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid source commit stamp" >&2; exit 3; }
+[[ "$RENT_TREE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid rent-image tree stamp" >&2; exit 3; }
+[[ "$STAMPED_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || { echo "[ERROR] invalid source hash stamp" >&2; exit 3; }
+CURRENT_SOURCE_HASH="$(bash "$ROOT/scripts/source-hash.sh")"
+if [ "$CURRENT_SOURCE_HASH" != "$STAMPED_SOURCE_HASH" ]; then
+  echo "[ERROR] shared source changed after master stamp; refusing deployment" >&2
+  echo "        stamped=$STAMPED_SOURCE_HASH" >&2
+  echo "        current=$CURRENT_SOURCE_HASH" >&2
+  echo "        run the master installer/update to restamp the source" >&2
+  exit 3
+fi
 echo "[INFO] source commit: $DEPLOY_COMMIT"
+echo "[INFO] source hash  : $CURRENT_SOURCE_HASH"
 echo "[INFO] rent-image tree: $RENT_TREE_SHA"
 
 ADMIN_HOME="$(getent passwd "$ADMIN_USER" | awk -F: '{print $6}')"
@@ -114,4 +123,4 @@ echo "[OK] compute-node installation complete"
 echo "[OK] SSH control user: $ADMIN_USER"
 echo "[OK] rent-node state: $CONTAINER_STATE"
 echo "[OK] monitoring: native node_exporter + rent-node metrics on TCP/9100"
-echo "[INFO] /src/rent/image is managed from Git and must not be edited locally"
+echo "[INFO] /src/rent/image is managed from the shared Git source and must not be edited locally"
