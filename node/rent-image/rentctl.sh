@@ -27,7 +27,7 @@ Functions:
   help            : 사용 가능한 기능과 역할 출력
   build           : Git-managed source로 Docker 이미지 빌드
   setup           : /src/rent 디렉토리 생성 + auth DB 초기화 + 컨테이너 실행 + 기본 대여 계정 생성
-  reset           : 컨테이너 중지/삭제 + /src/rent 데이터 초기화 + auth DB 초기화 + 기본 대여 계정 재생성
+  reset           : 컨테이너 삭제 + renter persistent 데이터 전체 초기화 + auth DB/계정/비밀번호 재생성
   stop            : 컨테이너 중지
   restart         : 컨테이너 재시작
   recreate        : 기존 컨테이너 삭제 후 현재 이미지로 재생성 (기존 /src/rent 데이터 유지)
@@ -80,15 +80,26 @@ cmd_setup() {
   sudo /src/rent/image/renter-account.sh create
 }
 
+clear_persistent_dir() {
+  local dir="$1"
+  [ "$BASE" = "/src/rent" ] || {
+    echo "[ERROR] refusing destructive reset with unexpected BASE=$BASE" >&2
+    exit 2
+  }
+  [ -d "$dir" ] || return 0
+  # Remove every child including dotfiles while preserving the top-level bind
+  # directory itself. `rm dir/*` would leave hidden renter data behind.
+  sudo find "$dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+}
+
 cmd_reset() {
   sudo docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
-  sudo rm -rf \
-    "${BASE}/auth"/* \
-    "${BASE}/home"/* \
-    "${BASE}/ssh"/* \
-    "${BASE}/work"/* \
-    "${BASE}/logs"/*
+  clear_persistent_dir "${BASE}/auth"
+  clear_persistent_dir "${BASE}/home"
+  clear_persistent_dir "${BASE}/ssh"
+  clear_persistent_dir "${BASE}/work"
+  clear_persistent_dir "${BASE}/logs"
 
   ensure_dirs
   sudo /src/rent/image/init-auth-db.sh "${IMAGE_NAME}"
