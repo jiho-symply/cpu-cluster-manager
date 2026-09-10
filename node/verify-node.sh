@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+STATE_DIR="/var/lib/cpu-cluster-manager"
+ROLE_FILE="$STATE_DIR/role"
+STATE="$STATE_DIR/deployed-version"
+
+HOST_ROLE="$(cat "$ROLE_FILE" 2>/dev/null || true)"
+if [ -z "$HOST_ROLE" ] && [ -f "$STATE" ]; then
+  HOST_ROLE="$(awk -F= '$1=="role" {print $2; exit}' "$STATE" 2>/dev/null || true)"
+fi
+if [ "$HOST_ROLE" = "master" ] || [ -f "$STATE_DIR/cluster.local.env" ]; then
+  echo "[ERROR] this host is a cluster master; node/verify-node.sh is compute-only" >&2
+  echo "        use scripts/verify-cluster.sh on a master" >&2
+  exit 2
+fi
+if [ "$HOST_ROLE" != "compute" ]; then
+  echo "[ERROR] host is not marked as an installed compute node" >&2
+  exit 2
+fi
+
 FAIL=0
 check_active() {
   local unit="$1"
@@ -30,7 +48,6 @@ else
   FAIL=1
 fi
 
-STATE=/var/lib/cpu-cluster-manager/deployed-version
 if [ -f "$STATE" ]; then
   echo "--- deployed version ---"
   cat "$STATE"
