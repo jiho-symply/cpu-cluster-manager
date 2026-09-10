@@ -32,13 +32,23 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
     || useradd -r -M -s /usr/sbin/nologin "$SERVICE_USER"
 fi
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-URL="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-${NE_ARCH}.tar.gz"
-curl -fL --retry 5 --connect-timeout 10 "$URL" -o "$TMP/node_exporter.tgz"
-printf '%s  %s\n' "$NE_SHA256" "$TMP/node_exporter.tgz" | sha256sum -c -
-tar -xzf "$TMP/node_exporter.tgz" -C "$TMP"
-install -m 0755 "$TMP/node_exporter-${NODE_EXPORTER_VERSION}.linux-${NE_ARCH}/node_exporter" "$INSTALL_DIR/node_exporter"
+NODE_EXPORTER_BIN="$INSTALL_DIR/node_exporter"
+if [ -x "$NODE_EXPORTER_BIN" ] && \
+   "$NODE_EXPORTER_BIN" --version 2>&1 | head -n 1 | grep -Fq "version ${NODE_EXPORTER_VERSION}"; then
+  echo "[KEEP] native node_exporter already installed: v${NODE_EXPORTER_VERSION}"
+else
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+  URL="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-${NE_ARCH}.tar.gz"
+  echo "[INFO] downloading node_exporter v${NODE_EXPORTER_VERSION}"
+  curl -fL --retry 5 --connect-timeout 10 "$URL" -o "$TMP/node_exporter.tgz"
+  printf '%s  %s\n' "$NE_SHA256" "$TMP/node_exporter.tgz" | sha256sum -c -
+  tar -xzf "$TMP/node_exporter.tgz" -C "$TMP"
+  install -m 0755 "$TMP/node_exporter-${NODE_EXPORTER_VERSION}.linux-${NE_ARCH}/node_exporter" "$NODE_EXPORTER_BIN"
+  rm -rf "$TMP"
+  trap - EXIT
+  echo "[OK] native node_exporter binary installed: v${NODE_EXPORTER_VERSION}"
+fi
 
 install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$TEXTFILE_DIR"
 install -m 0755 "$SCRIPT_DIR/rent-node-metrics.sh" "$INSTALL_DIR/rent-node-metrics"
@@ -67,7 +77,7 @@ if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then
   exit 4
 fi
 
-echo "[OK] native node_exporter installed: v${NODE_EXPORTER_VERSION}"
+echo "[OK] native node_exporter ready: v${NODE_EXPORTER_VERSION}"
 echo "[OK] Git-tracked systemd units installed"
 echo "[OK] rent-node metrics: systemd timer every 30s"
 echo "[OK] monitoring endpoint: :9100/metrics"
