@@ -15,6 +15,19 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# Compute deployment must execute from the local immutable snapshot prepared by
+# the master rollout. Never execute a mutable NFS/CIFS working tree as root.
+if command -v findmnt >/dev/null 2>&1; then
+  SOURCE_FSTYPE="$(findmnt -n -T "$ROOT" -o FSTYPE 2>/dev/null || true)"
+  case "$SOURCE_FSTYPE" in
+    nfs|nfs4|cifs)
+      echo "[ERROR] compute installer source is on network storage ($SOURCE_FSTYPE): $ROOT" >&2
+      echo "        use scripts/rollout-all-computes.sh on the cluster master so an immutable release is copied locally first" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 EXISTING_ROLE="$(cat "$ROLE_FILE" 2>/dev/null || true)"
 if [ -z "$EXISTING_ROLE" ] && [ -f "$STATE_DIR/deployed-version" ]; then
   EXISTING_ROLE="$(awk -F= '$1=="role" {print $2; exit}' "$STATE_DIR/deployed-version" 2>/dev/null || true)"
@@ -27,20 +40,12 @@ fi
 
 if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
   echo "[ERROR] manager public key not found: $PUBKEY_FILE" >&2
-  echo "        run the master installer first; it publishes $DEFAULT_PUBKEY on the shared source" >&2
   exit 2
 fi
 
-# Freshly discovered CentOS 7 computes may still carry Docker 18.09. Normalize
-# only the supported docker-ce package family to the same validated 20.10.17
-# baseline used by the existing CentOS nodes. This preserves /var/lib/docker
-# and any existing rent-node container identity/data.
-bash "$ROOT/scripts/ensure-compute-docker.sh"
-bash "$ROOT/scripts/preflight.sh" compute
-
+# Verify the immutable local release before any package/runtime mutation.
 [ -f "$SOURCE_STATE" ] || {
-  echo "[ERROR] shared source stamp missing: $SOURCE_STATE" >&2
-  echo "        run the master installer/update first" >&2
+  echo "[ERROR] immutable release source stamp missing: $SOURCE_STATE" >&2
   exit 3
 }
 get_source() {
@@ -53,34 +58,22 @@ STAMPED_SOURCE_HASH="$(get_source source_hash)"
 [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid source commit stamp" >&2; exit 3; }
 [[ "$RENT_TREE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid rent-image tree stamp" >&2; exit 3; }
 [[ "$STAMPED_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || { echo "[ERROR] invalid source hash stamp" >&2; exit 3; }
-
-# /home is NFS-backed on computes. Immediately after a master-side git update,
-# an individual NFS client can briefly retain stale file/attribute cache even
-# though the master and other computes already see the new tree. Preserve the
-# integrity check, but allow that cache to converge before declaring corruption.
-SOURCE_HASH_RETRIES=15
-SOURCE_HASH_RETRY_SECONDS=5
-CURRENT_SOURCE_HASH=""
-for ((attempt=1; attempt<=SOURCE_HASH_RETRIES; attempt++)); do
-  CURRENT_SOURCE_HASH="$(bash "$ROOT/scripts/source-hash.sh")"
-  if [ "$CURRENT_SOURCE_HASH" = "$STAMPED_SOURCE_HASH" ]; then
-    break
-  fi
-  if [ "$attempt" -lt "$SOURCE_HASH_RETRIES" ]; then
-    echo "[WAIT] shared source view differs from master stamp (attempt $attempt/$SOURCE_HASH_RETRIES); retrying in ${SOURCE_HASH_RETRY_SECONDS}s" >&2
-    sleep "$SOURCE_HASH_RETRY_SECONDS"
-  fi
-done
+CURRENT_SOURCE_HASH="$(bash "$ROOT/scripts/source-hash.sh")"
 if [ "$CURRENT_SOURCE_HASH" != "$STAMPED_SOURCE_HASH" ]; then
-  echo "[ERROR] shared source differs from master stamp after NFS cache convergence window; refusing deployment" >&2
+  echo "[ERROR] local immutable release hash mismatch; refusing deployment" >&2
   echo "        stamped=$STAMPED_SOURCE_HASH" >&2
   echo "        current=$CURRENT_SOURCE_HASH" >&2
-  echo "        inspect the compute /home mount and source tree; do not restamp blindly" >&2
   exit 3
 fi
-echo "[INFO] source commit: $DEPLOY_COMMIT"
-echo "[INFO] source hash  : $CURRENT_SOURCE_HASH"
+echo "[INFO] release commit: $DEPLOY_COMMIT"
+echo "[INFO] release source hash: $CURRENT_SOURCE_HASH"
 echo "[INFO] rent-image tree: $RENT_TREE_SHA"
+
+# Freshly discovered CentOS 7 computes may still carry Docker 18.09. Normalize
+# only the supported docker-ce package family to the validated 20.10.17
+# baseline. This preserves /var/lib/docker and existing rent-node identity/data.
+bash "$ROOT/scripts/ensure-compute-docker.sh"
+bash "$ROOT/scripts/preflight.sh" compute
 
 ADMIN_HOME="$(getent passwd "$ADMIN_USER" | awk -F: '{print $6}')"
 ADMIN_GROUP="$(id -gn "$ADMIN_USER")"
@@ -135,10 +128,10 @@ CONTAINER_NAME="${CONTAINER_NAME:-rent-node}"
 IMAGE_TREE_SHA="$(docker image inspect "$IMAGE_NAME" --format '{{ index .Config.Labels "io.cpu-cluster-manager.rent-tree" }}' 2>/dev/null || true)"
 
 if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1 || [ "$IMAGE_TREE_SHA" != "$RENT_TREE_SHA" ]; then
-  echo "[INFO] building rental image from Git tree: $RENT_TREE_SHA"
+  echo "[INFO] building rental image from release tree: $RENT_TREE_SHA"
   RENT_TREE_SHA="$RENT_TREE_SHA" /src/rent/image/rentctl.sh build
 else
-  echo "[SKIP] rental image already matches Git tree: $RENT_TREE_SHA"
+  echo "[SKIP] rental image already matches release tree: $RENT_TREE_SHA"
 fi
 
 FRESH_SETUP=0
@@ -167,4 +160,4 @@ echo "[OK] SSH control user: $ADMIN_USER"
 echo "[OK] rent-node state: $CONTAINER_STATE"
 echo "[OK] monitoring: native node_exporter + rent-node metrics on TCP/9100"
 echo "[INFO] host role: compute"
-echo "[INFO] /src/rent/image is managed from the shared Git source and must not be edited locally"
+echo "[INFO] deployment executed from a checksum-verified immutable local release"
