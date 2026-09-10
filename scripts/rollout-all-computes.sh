@@ -43,7 +43,7 @@ echo "=================================================="
 printf '  %s\n' "${ENTRIES[@]}"
 echo
 
-echo "[1/8] Preparing current master/source state"
+echo "[1/9] Preparing current master/source state"
 bash "$ROOT/scripts/install-master.sh" "$CONFIG"
 bash "$ROOT/scripts/verify-manager-ssh.sh" "$CONFIG"
 
@@ -53,7 +53,7 @@ STAMPED_SOURCE_HASH="$(awk -F= '$1=="source_hash" {print $2; exit}' "$SOURCE_STA
 [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "invalid source commit stamp"
 [[ "$STAMPED_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || fail "invalid source hash stamp"
 
-echo "[2/8] Building immutable release bundle"
+echo "[2/9] Building immutable release bundle"
 bash "$ROOT/scripts/build-release-bundle.sh"
 BUNDLE_PATH="$STATE_DIR/releases/ccm-${DEPLOY_COMMIT}.tar"
 [ -f "$BUNDLE_PATH" ] || fail "release bundle missing after build: $BUNDLE_PATH"
@@ -68,10 +68,25 @@ RUN_TOKEN="${CLUSTER}-$$-$(date +%s)"
 MARKER="ccm-bootstrap-${RUN_TOKEN}"
 AUTH_DIR="$HOME/.ssh"
 AUTHORIZED_KEYS="$AUTH_DIR/authorized_keys"
+REMOTE_BUNDLE="/tmp/ccm-release-${RUN_TOKEN}.tar"
+REMOTE_ROOT="/tmp/ccm-release-${RUN_TOKEN}"
 BOOTSTRAP_ACTIVE=0
+SSH_READY=0
 SUDO_PASS=""
 
+cleanup_remote_release_artifacts() {
+  [ "$SSH_READY" -eq 1 ] || return 0
+  local entry host
+  for entry in "${ENTRIES[@]}"; do
+    host="${entry#*@}"
+    ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "rm -rf '$REMOTE_ROOT' '$REMOTE_BUNDLE'" >/dev/null 2>&1 || true
+  done
+}
+
 cleanup_bootstrap() {
+  # Remove staged local release copies while the temporary SSH credential still
+  # exists, then remove that credential from the shared authorized_keys file.
+  cleanup_remote_release_artifacts || true
   if [ "$BOOTSTRAP_ACTIVE" -eq 1 ] && [ -f "$AUTHORIZED_KEYS" ]; then
     tmp_auth="$(mktemp "$AUTH_DIR/.authorized_keys.XXXXXX")"
     awk -v marker="$MARKER" 'index($0, marker) == 0 {print}' "$AUTHORIZED_KEYS" > "$tmp_auth"
@@ -112,7 +127,7 @@ scp_common=(
   -o UserKnownHostsFile="$BOOT_KNOWN_HOSTS"
 )
 
-echo "[3/8] Scanning SSH host keys"
+echo "[3/9] Scanning SSH host keys"
 : > "$BOOT_KNOWN_HOSTS"
 for entry in "${ENTRIES[@]}"; do
   host="${entry#*@}"
@@ -121,8 +136,9 @@ for entry in "${ENTRIES[@]}"; do
   printf '%s\n' "$scanned" >> "$BOOT_KNOWN_HOSTS"
 done
 chmod 0600 "$BOOT_KNOWN_HOSTS"
+SSH_READY=1
 
-echo "[4/8] Verifying hostname <-> private-IP inventory"
+echo "[4/9] Verifying hostname <-> private-IP inventory"
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
   host="${entry#*@}"
@@ -131,7 +147,7 @@ for entry in "${ENTRIES[@]}"; do
   echo "[OK] $name = $host"
 done
 
-echo "[5/8] Preflighting sudo on every compute"
+echo "[5/9] Preflighting sudo on every compute"
 NEED_PASSWORD=0
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
@@ -165,68 +181,76 @@ for entry in "${ENTRIES[@]}"; do
 done
 echo "[OK] sudo preflight passed on all ${#ENTRIES[@]} computes"
 
-run_remote_install() {
-  local entry="$1" name host log rc remote_bundle remote_root
+stage_remote_release() {
+  local entry="$1" name host log rc
   name="${entry%%@*}"
   host="${entry#*@}"
-  log="$BOOT_DIR/${name}.log"
-  remote_bundle="/tmp/ccm-release-${RUN_TOKEN}.tar"
-  remote_root="/tmp/ccm-release-${RUN_TOKEN}"
-
-  echo "[INSTALL] $name ($host)"
+  log="$BOOT_DIR/${name}.stage.log"
+  echo "[STAGE] $name ($host)"
   : > "$log"
   set +e
 
-  ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "rm -rf '$remote_root' '$remote_bundle' && mkdir -m 700 '$remote_root'" >>"$log" 2>&1
+  ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "rm -rf '$REMOTE_ROOT' '$REMOTE_BUNDLE' && mkdir -m 700 '$REMOTE_ROOT'" >>"$log" 2>&1
   rc=$?
   if [ "$rc" -eq 0 ]; then
-    scp "${scp_common[@]}" "$BUNDLE_PATH" "$ADMIN_USER@$host:$remote_bundle" >>"$log" 2>&1
+    scp "${scp_common[@]}" "$BUNDLE_PATH" "$ADMIN_USER@$host:$REMOTE_BUNDLE" >>"$log" 2>&1
     rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
-    ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "set -e; actual=\$(sha256sum '$remote_bundle' | awk '{print \$1}'); [ \"\$actual\" = '$BUNDLE_SHA256' ] || { echo '[ERROR] transported release bundle checksum mismatch' >&2; exit 20; }; tar -xf '$remote_bundle' -C '$remote_root'; [ -f '$remote_root/.release-source-manifest.sha256' ] || { echo '[ERROR] release per-file manifest missing after extraction' >&2; exit 21; }; if ! (cd '$remote_root' && sha256sum -c .release-source-manifest.sha256 >/dev/null 2>&1); then echo '[ERROR] extracted release file checksum mismatch' >&2; (cd '$remote_root' && sha256sum -c .release-source-manifest.sha256 2>&1 | grep -E 'FAILED|No such file|WARNING' || true) >&2; exit 21; fi; actual_source=\$(sha256sum '$remote_root/.release-source-manifest.sha256' | awk '{print \$1}'); [ \"\$actual_source\" = '$STAMPED_SOURCE_HASH' ] || { echo \"[ERROR] extracted release manifest hash mismatch: expected=$STAMPED_SOURCE_HASH actual=\$actual_source\" >&2; exit 21; }; actual_commit=\$(awk -F= '\$1==\"commit\" {print \$2; exit}' '$remote_root/.cluster-source-state'); [ \"\$actual_commit\" = '$DEPLOY_COMMIT' ] || { echo '[ERROR] extracted release commit mismatch' >&2; exit 22; }; echo '[OK] immutable release verified locally'" >>"$log" 2>&1
+    ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "set -e; actual=\$(sha256sum '$REMOTE_BUNDLE' | awk '{print \$1}'); [ \"\$actual\" = '$BUNDLE_SHA256' ] || { echo '[ERROR] transported release bundle checksum mismatch' >&2; exit 20; }; tar -xf '$REMOTE_BUNDLE' -C '$REMOTE_ROOT'; [ -f '$REMOTE_ROOT/.release-source-manifest.sha256' ] || { echo '[ERROR] release per-file manifest missing after extraction' >&2; exit 21; }; if ! (cd '$REMOTE_ROOT' && sha256sum -c .release-source-manifest.sha256 >/dev/null 2>&1); then echo '[ERROR] extracted release file checksum mismatch' >&2; (cd '$REMOTE_ROOT' && sha256sum -c .release-source-manifest.sha256 2>&1 | grep -E 'FAILED|No such file|WARNING' || true) >&2; exit 21; fi; actual_source=\$(sha256sum '$REMOTE_ROOT/.release-source-manifest.sha256' | awk '{print \$1}'); [ \"\$actual_source\" = '$STAMPED_SOURCE_HASH' ] || { echo \"[ERROR] extracted release manifest hash mismatch: expected=$STAMPED_SOURCE_HASH actual=\$actual_source\" >&2; exit 21; }; actual_commit=\$(awk -F= '\$1==\"commit\" {print \$2; exit}' '$REMOTE_ROOT/.cluster-source-state'); [ \"\$actual_commit\" = '$DEPLOY_COMMIT' ] || { echo '[ERROR] extracted release commit mismatch' >&2; exit 22; }; echo '[OK] immutable release verified locally'" >>"$log" 2>&1
     rc=$?
   fi
-
-  if [ "$rc" -eq 0 ]; then
-    if ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
-      ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
-        "sudo -n bash '$remote_root/node/install-node.sh' '$remote_root/.cluster-manager.pub' && bash '$remote_root/node/verify-node.sh'" \
-        >>"$log" 2>&1
-      rc=$?
-    else
-      printf '%s\n' "$SUDO_PASS" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
-        "sudo -S -p '' bash '$remote_root/node/install-node.sh' '$remote_root/.cluster-manager.pub' && bash '$remote_root/node/verify-node.sh'" \
-        >>"$log" 2>&1
-      rc=$?
-    fi
-  fi
-
-  ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "rm -rf '$remote_root' '$remote_bundle'" >>"$log" 2>&1 || true
   set -e
 
   if [ "$rc" -ne 0 ]; then
-    echo "[FAIL] $name ($host)" >&2
+    echo "[FAIL] release staging failed on $name ($host)" >&2
     cat "$log" >&2
     return "$rc"
   fi
-  echo "[OK] $name installed and verified from immutable release"
-  grep -E '^\[CREDENTIAL\]' "$log" || true
+  echo "[OK] $name immutable release staged and verified"
 }
 
-# Compute installs remain serialized because every node updates the same
-# NFS-backed /home/ysadmin/authorized_keys file. Deployment source itself is
-# no longer executed from NFS: one immutable tar is copied over SSH, verified,
-# extracted to local /tmp, and executed only from that local snapshot.
-echo "[6/8] Installing/updating all computes sequentially"
+# Stage and validate the same immutable artifact on every compute before any
+# compute is modified. A transport, extraction, filesystem, or checksum problem
+# therefore cannot create another partial rollout.
+echo "[6/9] Staging/verifying immutable release on every compute"
 for entry in "${ENTRIES[@]}"; do
-  run_remote_install "$entry" || fail "compute rollout failed; master NODES was not expanded"
+  stage_remote_release "$entry" || fail "release preflight failed; no compute installation started"
+done
+
+echo "[7/9] Installing/updating all computes sequentially from staged releases"
+for entry in "${ENTRIES[@]}"; do
+  name="${entry%%@*}"
+  host="${entry#*@}"
+  log="$BOOT_DIR/${name}.install.log"
+  echo "[INSTALL] $name ($host)"
+  : > "$log"
+  set +e
+  if ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
+    ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
+      "sudo -n bash '$REMOTE_ROOT/node/install-node.sh' '$REMOTE_ROOT/.cluster-manager.pub' && bash '$REMOTE_ROOT/node/verify-node.sh'" \
+      >>"$log" 2>&1
+    rc=$?
+  else
+    printf '%s\n' "$SUDO_PASS" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
+      "sudo -S -p '' bash '$REMOTE_ROOT/node/install-node.sh' '$REMOTE_ROOT/.cluster-manager.pub' && bash '$REMOTE_ROOT/node/verify-node.sh'" \
+      >>"$log" 2>&1
+    rc=$?
+  fi
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "[FAIL] $name ($host)" >&2
+    cat "$log" >&2
+    fail "compute rollout failed; master NODES was not expanded"
+  fi
+  echo "[OK] $name installed and verified from immutable release"
+  grep -E '^\[CREDENTIAL\]' "$log" || true
 done
 
 cleanup_bootstrap
 trap - EXIT INT TERM
 
-echo "[7/8] Expanding master NODES to the full validated inventory"
+echo "[8/9] Expanding master NODES to the full validated inventory"
 BACKUP="$CONFIG.pre-full-rollout-$(date +%Y%m%d-%H%M%S)"
 cp -p "$CONFIG" "$BACKUP"
 tmp_cfg="$(mktemp "$STATE_DIR/.cluster.local.env.XXXXXX")"
@@ -243,7 +267,7 @@ echo "[BACKUP] previous config: $BACKUP"
 bash "$ROOT/scripts/install-master.sh" "$CONFIG"
 bash "$ROOT/scripts/verify-manager-ssh.sh" "$CONFIG"
 
-echo "[8/8] End-to-end verification"
+echo "[9/9] End-to-end verification"
 bash "$ROOT/scripts/verify-cluster.sh" "$CONFIG"
 
 echo
