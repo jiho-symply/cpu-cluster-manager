@@ -19,6 +19,16 @@ while IFS= read -r -d '' f; do
   bash -n "$f"
 done < <(find . -type f -name '*.sh' -print0)
 
+echo '== CentOS 7 Git compatibility =='
+if grep -R -n --exclude=static-check.sh 'git -C ' scripts node >/tmp/ccm-git-c-usage.$$ 2>/dev/null; then
+  cat /tmp/ccm-git-c-usage.$$ >&2
+  rm -f /tmp/ccm-git-c-usage.$$
+  echo '[ERROR] runtime scripts must not use git -C; CentOS 7 Git 1.8.x may not support it' >&2
+  exit 1
+fi
+rm -f /tmp/ccm-git-c-usage.$$
+echo '[OK] no git -C dependency in runtime scripts'
+
 echo '== Python syntax =='
 python3 -m compileall -q manager/app
 
