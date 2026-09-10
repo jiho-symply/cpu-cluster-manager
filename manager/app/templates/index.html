@@ -3,46 +3,56 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ cluster }} · CPU Cluster Manager</title>
+  <title>CPU Cluster Manager</title>
   <style>
     :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing:border-box; }
     body { margin:0; background:#0b1020; color:#e7eaf0; }
-    main { max-width:1440px; margin:0 auto; padding:24px 20px 40px; }
+    main { max-width:1500px; margin:0 auto; padding:24px 20px 40px; }
     header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:16px; }
-    h1 { margin:0; font-size:24px; }
+    h1,h2 { margin:0; }
+    h1 { font-size:24px; }
+    h2 { font-size:18px; }
     .muted { color:#9aa4b2; }
-    .toolbar,.actions,.tabs { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .toolbar,.actions,.tabs,.cluster-head,.shutdown-actions,.monitor-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     button,a.button { border:1px solid #34405a; background:#172036; color:#eef2f7; border-radius:8px; padding:8px 11px; cursor:pointer; text-decoration:none; }
     button:hover,a.button:hover { background:#202b45; }
-    button.danger { border-color:#6e3840; }
-    button:disabled { opacity:.45; cursor:default; }
+    button.danger { border-color:#8b3a43; background:#321923; }
+    button.danger:hover { background:#49202b; }
+    button:disabled { opacity:.4; cursor:default; }
     .tabs { margin-bottom:16px; border-bottom:1px solid #27324a; padding-bottom:10px; }
     .tab.active { background:#2f6feb; border-color:#2f6feb; color:white; }
     .view[hidden] { display:none; }
-    table { width:100%; border-collapse:collapse; background:#11182a; border:1px solid #27324a; border-radius:10px; overflow:hidden; }
-    th,td { text-align:left; padding:12px 10px; border-bottom:1px solid #27324a; vertical-align:middle; }
+    .cluster-card { background:#0e1526; border:1px solid #27324a; border-radius:12px; margin-bottom:18px; overflow:hidden; }
+    .cluster-head { justify-content:space-between; padding:14px 14px 12px; border-bottom:1px solid #27324a; }
+    .cluster-title { display:flex; gap:10px; align-items:baseline; }
+    .badge { font-size:11px; border:1px solid #34405a; border-radius:999px; padding:3px 7px; color:#b7c2d0; }
+    .shutdown-note { font-size:12px; color:#d2a8a8; padding:0 14px 12px; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { text-align:left; padding:11px 10px; border-bottom:1px solid #27324a; vertical-align:middle; }
     th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#9aa4b2; }
     td { font-size:14px; }
+    tr:last-child td { border-bottom:0; }
     .status { display:inline-flex; align-items:center; gap:7px; }
     .dot { width:9px; height:9px; border-radius:50%; background:#7b8496; }
     .dot.ok { background:#3fb950; }
     .dot.bad { background:#f85149; }
-    .monitor-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }
+    .monitor-toolbar { justify-content:space-between; margin-bottom:10px; }
     #grafana-frame { display:block; width:100%; height:calc(100vh - 175px); min-height:620px; border:1px solid #27324a; border-radius:10px; background:#11182a; }
-    dialog { width:min(760px,calc(100vw - 40px)); border:1px solid #34405a; border-radius:10px; background:#11182a; color:#eef2f7; }
-    dialog::backdrop { background:rgba(0,0,0,.6); }
+    dialog { width:min(820px,calc(100vw - 40px)); border:1px solid #34405a; border-radius:10px; background:#11182a; color:#eef2f7; }
+    dialog::backdrop { background:rgba(0,0,0,.65); }
     pre { white-space:pre-wrap; word-break:break-word; background:#090e1a; padding:14px; border-radius:8px; max-height:60vh; overflow:auto; }
     form.logout { margin:0; }
-    @media (max-width:820px) { .table-wrap { overflow-x:auto; } table { min-width:840px; } header { align-items:flex-start; } #grafana-frame { min-height:520px; } }
+    .warning { border:1px solid #6e4f2b; background:#251d12; padding:10px 12px; border-radius:8px; margin-bottom:16px; color:#e5c07b; }
+    @media (max-width:900px) { .table-wrap { overflow-x:auto; } table { min-width:920px; } header,.cluster-head { align-items:flex-start; } #grafana-frame { min-height:520px; } }
   </style>
 </head>
 <body>
 <main>
   <header>
     <div>
-      <h1>{{ cluster }} · CPU Cluster Manager</h1>
-      <div class="muted">{{ node_count }} compute nodes</div>
+      <h1>CPU Cluster Manager</h1>
+      <div class="muted">Primary: {{ cluster }}{% if federated %} · federated control enabled{% endif %}</div>
     </div>
     <div class="toolbar">
       <span id="updated" class="muted">-</span>
@@ -57,21 +67,16 @@
   </nav>
 
   <section id="view-control" class="view">
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Node</th><th>rent-node</th><th>Renter</th><th>Monitoring</th><th>Actions</th></tr></thead>
-        <tbody id="nodes"><tr><td colspan="5">Loading…</td></tr></tbody>
-      </table>
-    </div>
+    {% if federated %}
+    <div class="warning">두 클러스터를 모두 종료할 때는 Cluster 2를 먼저 종료하고, 이 페이지를 제공하는 Cluster 1 master를 마지막에 종료하세요.</div>
+    {% endif %}
+    <div id="clusters">Loading…</div>
   </section>
 
   <section id="view-monitoring" class="view" hidden>
     <div class="monitor-toolbar">
-      <div class="actions">
-        <button type="button" data-dashboard="recent">Recent</button>
-        <button type="button" data-dashboard="history">5y History</button>
-      </div>
-      <span class="muted">Grafana · embedded behind the same login</span>
+      <div id="monitor-actions" class="actions"></div>
+      <span id="monitor-label" class="muted">Grafana · same management session</span>
     </div>
     <iframe id="grafana-frame" title="Grafana monitoring" loading="lazy"></iframe>
   </section>
@@ -85,70 +90,145 @@
 </dialog>
 
 <script>
-const tbody=document.getElementById('nodes');
+const clustersEl=document.getElementById('clusters');
 const updated=document.getElementById('updated');
 const logsDialog=document.getElementById('logs-dialog');
 const logsTitle=document.getElementById('logs-title');
 const logsContent=document.getElementById('logs-content');
 const grafanaFrame=document.getElementById('grafana-frame');
-const grafanaBase={{ grafana_base_url | tojson }};
-const recentBase=`${grafanaBase}/d/cluster-recent/cluster-recent?orgId=1`;
-const historyBase=`${grafanaBase}/d/cluster-archive/cluster-long-term?orgId=1&from=now-1y&to=now`;
+const monitorActions=document.getElementById('monitor-actions');
+const monitorLabel=document.getElementById('monitor-label');
+let clusterData=[];
 let grafanaLoaded=false;
+
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-function actionButton(node,action,label,danger=false){return `<button type="button" data-node="${esc(node)}" data-action="${action}" class="${danger?'danger':''}">${label}</button>`;}
-function monitorLinks(node){return `<div class="actions"><button type="button" data-monitor-node="${esc(node)}" data-monitor-kind="recent">Recent</button><button type="button" data-monitor-node="${esc(node)}" data-monitor-kind="history">5y History</button></div>`;}
+function actionButton(cluster,node,action,label,danger=false){return `<button type="button" data-cluster="${esc(cluster)}" data-node="${esc(node)}" data-action="${action}" class="${danger?'danger':''}">${label}</button>`;}
+function monitorLinks(cluster,node){return `<div class="actions"><button type="button" data-monitor-cluster="${esc(cluster)}" data-monitor-node="${esc(node)}" data-monitor-kind="recent">Recent</button><button type="button" data-monitor-cluster="${esc(cluster)}" data-monitor-node="${esc(node)}" data-monitor-kind="history">5y History</button></div>`;}
+
+function renderNode(cluster,n){
+  if(!n.reachable) return `<tr><td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.host)}</div></td><td colspan="3"><span class="status"><span class="dot bad"></span>Unreachable / powered off</span><div class="muted">${esc(n.error||'')}</div></td><td>-</td></tr>`;
+  const running=n.container_status==='running';
+  return `<tr><td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.host)}</div></td><td><span class="status"><span class="dot ${running?'ok':''}"></span>${esc(n.container_status||'missing')}</span><div class="muted">${esc(n.container_uptime||'')}</div></td><td>${esc(n.renter||'-')}</td><td>${monitorLinks(cluster,n.name)}</td><td><div class="actions">${actionButton(cluster,n.name,'restart','Restart')}${actionButton(cluster,n.name,'stop','Stop')}${actionButton(cluster,n.name,'start','Start')}${actionButton(cluster,n.name,'recreate','Recreate',true)}${actionButton(cluster,n.name,'reset-password','Reset PW',true)}${actionButton(cluster,n.name,'logs','Logs')}${actionButton(cluster,n.name,'poweroff','Power off host',true)}</div></td></tr>`;
+}
+
+function renderCluster(c){
+  if(!c.reachable){
+    return `<section class="cluster-card"><div class="cluster-head"><div class="cluster-title"><h2>${esc(c.cluster)}</h2><span class="badge">peer</span></div></div><div style="padding:14px"><span class="status"><span class="dot bad"></span>Master unreachable</span><div class="muted">${esc(c.error||'')}</div></div></section>`;
+  }
+  const rows=(c.nodes||[]).map(n=>renderNode(c.cluster,n)).join('')||'<tr><td colspan="5">No compute nodes</td></tr>';
+  return `<section class="cluster-card" data-cluster-card="${esc(c.cluster)}"><div class="cluster-head"><div class="cluster-title"><h2>${esc(c.cluster)}</h2><span class="badge">${c.local?'local':'peer'}</span><span class="muted">${(c.nodes||[]).length} compute nodes</span></div><div class="shutdown-actions"><button type="button" class="danger" data-shutdown-computes="${esc(c.cluster)}">Shutdown computes</button><button type="button" class="danger" data-shutdown-master="${esc(c.cluster)}" disabled>Shutdown master</button></div></div><div class="shutdown-note" data-shutdown-status="${esc(c.cluster)}">Master shutdown is locked until all compute nodes are explicitly powered off and confirmed offline.</div><div class="table-wrap"><table><thead><tr><th>Node</th><th>rent-node</th><th>Renter</th><th>Monitoring</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+
+function renderMonitoringButtons(){
+  monitorActions.innerHTML=clusterData.filter(c=>c.reachable).map(c=>`<span class="actions"><strong>${esc(c.cluster)}</strong><button type="button" data-monitor-cluster="${esc(c.cluster)}" data-monitor-kind="recent">Recent</button><button type="button" data-monitor-cluster="${esc(c.cluster)}" data-monitor-kind="history">5y History</button></span>`).join('');
+}
+
 function selectView(name){
   document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==`view-${name}`);
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
-  if(name==='monitoring'&&!grafanaLoaded){grafanaFrame.src=recentBase;grafanaLoaded=true;}
+  if(name==='monitoring'&&!grafanaLoaded){
+    const first=clusterData.find(c=>c.reachable);
+    if(first) openMonitoring(first.cluster,'recent','');
+  }
 }
-function openMonitoring(kind,node=''){
-  const base=kind==='history'?historyBase:recentBase;
-  const suffix=node?`&var-node=${encodeURIComponent(node)}`:'';
-  grafanaFrame.src=base+suffix;
+
+function openMonitoring(cluster,kind,node=''){
+  const c=clusterData.find(x=>x.cluster===cluster);
+  if(!c||!c.reachable){alert(`${cluster} monitoring is unavailable`);return;}
+  const base=c.grafana_base;
+  let url=kind==='history'?`${base}/d/cluster-archive/cluster-long-term?orgId=1&from=now-1y&to=now`:`${base}/d/cluster-recent/cluster-recent?orgId=1`;
+  if(node) url+=`&var-node=${encodeURIComponent(node)}`;
+  grafanaFrame.src=url;
+  monitorLabel.textContent=`${cluster} · ${kind==='history'?'5y History':'Recent'}`;
   grafanaLoaded=true;
   selectView('monitoring');
 }
-async function loadNodes(){
-  const res=await fetch('/api/nodes',{headers:{Accept:'application/json'}});
+
+async function loadClusters(){
+  const res=await fetch('/api/clusters',{headers:{Accept:'application/json'}});
   if(res.status===401){location.replace('/login');return;}
   if(!res.ok) throw new Error(`HTTP ${res.status}`);
   const data=await res.json();
-  tbody.innerHTML=data.nodes.map(n=>{
-    if(!n.reachable) return `<tr><td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.host)}</div></td><td colspan="3"><span class="status"><span class="dot bad"></span>Unreachable</span><div class="muted">${esc(n.error)}</div></td><td>-</td></tr>`;
-    const running=n.container_status==='running';
-    return `<tr><td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.host)}</div></td><td><span class="status"><span class="dot ${running?'ok':''}"></span>${esc(n.container_status||'missing')}</span><div class="muted">${esc(n.container_uptime||'')}</div></td><td>${esc(n.renter||'-')}</td><td>${monitorLinks(n.name)}</td><td><div class="actions">${actionButton(n.name,'restart','Restart')}${actionButton(n.name,'stop','Stop',true)}${actionButton(n.name,'start','Start')}${actionButton(n.name,'recreate','Recreate',true)}${actionButton(n.name,'reset-password','Reset PW',true)}${actionButton(n.name,'logs','Logs')}</div></td></tr>`;
-  }).join('');
+  clusterData=data.clusters||[];
+  clustersEl.innerHTML=clusterData.map(renderCluster).join('');
+  renderMonitoringButtons();
   updated.textContent=new Date().toLocaleTimeString();
 }
-async function runAction(node,action,button){
+
+async function runAction(cluster,node,action,button){
   if(action==='logs'){
-    logsTitle.textContent=`${node} · rent-node logs`;logsContent.textContent='Loading…';logsDialog.showModal();
-    const r=await fetch(`/api/nodes/${encodeURIComponent(node)}/logs`);
+    logsTitle.textContent=`${cluster} · ${node} · rent-node logs`;logsContent.textContent='Loading…';logsDialog.showModal();
+    const r=await fetch(`/api/clusters/${encodeURIComponent(cluster)}/nodes/${encodeURIComponent(node)}/logs`);
     if(r.status===401){location.replace('/login');return;}
     logsContent.textContent=await r.text();return;
   }
-  if((action==='stop'||action==='recreate'||action==='reset-password')&&!confirm(`${node}: ${action}?`)) return;
+  const destructive=['recreate','reset-password','poweroff'];
+  if(destructive.includes(action)){
+    const text=action==='poweroff'?`${cluster}/${node}: rent-node를 정지한 뒤 compute host 전원을 끕니다. 계속할까요?`:`${cluster}/${node}: ${action}?`;
+    if(!confirm(text)) return;
+  }
   button.disabled=true;
   try{
-    const r=await fetch(`/api/nodes/${encodeURIComponent(node)}/${action}`,{method:'POST'});
+    const r=await fetch(`/api/clusters/${encodeURIComponent(cluster)}/nodes/${encodeURIComponent(node)}/${action}`,{method:'POST'});
     if(r.status===401){location.replace('/login');return;}
-    const body=await r.json();if(!r.ok) throw new Error(body.detail||`HTTP ${r.status}`);
+    const body=await r.json();if(!r.ok) throw new Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail));
     if(action==='reset-password') alert(body.output);
-    await loadNodes();
+    if(action==='poweroff') alert(`${cluster}/${node}: host powered off and confirmed offline.`);
+    await loadClusters();
   }catch(err){alert(err.message);}finally{button.disabled=false;}
 }
+
+async function shutdownComputes(cluster,button){
+  if(!confirm(`${cluster}: 모든 rent-node를 먼저 정지하고 모든 compute host를 종료합니다. 계속할까요?`)) return;
+  button.disabled=true;
+  const statusEl=document.querySelector(`[data-shutdown-status="${CSS.escape(cluster)}"]`);
+  if(statusEl) statusEl.textContent='Stopping rent-node containers, powering off compute hosts, and waiting for offline confirmation…';
+  try{
+    const r=await fetch(`/api/clusters/${encodeURIComponent(cluster)}/shutdown/computes`,{method:'POST'});
+    const body=await r.json();
+    if(!r.ok||!body.all_offline) throw new Error(body.detail?JSON.stringify(body.detail):JSON.stringify(body.nodes||body));
+    if(statusEl) statusEl.textContent='All compute nodes are confirmed offline. Master shutdown is now enabled.';
+    const masterButton=document.querySelector(`[data-shutdown-master="${CSS.escape(cluster)}"]`);
+    if(masterButton) masterButton.disabled=false;
+    await loadClusters();
+    // loadClusters re-renders buttons, so re-enable the newly rendered master button.
+    const newMasterButton=document.querySelector(`[data-shutdown-master="${CSS.escape(cluster)}"]`);
+    const newStatus=document.querySelector(`[data-shutdown-status="${CSS.escape(cluster)}"]`);
+    if(newMasterButton) newMasterButton.disabled=false;
+    if(newStatus) newStatus.textContent='All compute nodes are confirmed offline. Master shutdown is now enabled.';
+  }catch(err){
+    if(statusEl) statusEl.textContent=`Shutdown incomplete: ${err.message}`;
+    alert(err.message);
+  }finally{button.disabled=false;}
+}
+
+async function shutdownMaster(cluster,button){
+  const typed=prompt(`${cluster} master를 종료합니다. 확인을 위해 정확히 ${cluster} 를 입력하세요.`,'');
+  if(typed!==cluster) return;
+  button.disabled=true;
+  try{
+    const r=await fetch(`/api/clusters/${encodeURIComponent(cluster)}/shutdown/master`,{method:'POST'});
+    const body=await r.json();
+    if(!r.ok) throw new Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail));
+    alert(`${cluster} master poweroff requested.`);
+  }catch(err){alert(err.message);button.disabled=false;}
+}
+
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>selectView(b.dataset.view)));
-document.querySelectorAll('[data-dashboard]').forEach(b=>b.addEventListener('click',()=>openMonitoring(b.dataset.dashboard)));
-tbody.addEventListener('click',e=>{
-  const monitor=e.target.closest('button[data-monitor-node]');
-  if(monitor){openMonitoring(monitor.dataset.monitorKind,monitor.dataset.monitorNode);return;}
-  const b=e.target.closest('button[data-node]');if(b)runAction(b.dataset.node,b.dataset.action,b);
+monitorActions.addEventListener('click',e=>{const b=e.target.closest('button[data-monitor-cluster]');if(b)openMonitoring(b.dataset.monitorCluster,b.dataset.monitorKind,'');});
+clustersEl.addEventListener('click',e=>{
+  const monitor=e.target.closest('button[data-monitor-cluster]');
+  if(monitor){openMonitoring(monitor.dataset.monitorCluster,monitor.dataset.monitorKind,monitor.dataset.monitorNode||'');return;}
+  const shutdownC=e.target.closest('button[data-shutdown-computes]');
+  if(shutdownC){shutdownComputes(shutdownC.dataset.shutdownComputes,shutdownC);return;}
+  const shutdownM=e.target.closest('button[data-shutdown-master]');
+  if(shutdownM){shutdownMaster(shutdownM.dataset.shutdownMaster,shutdownM);return;}
+  const b=e.target.closest('button[data-node]');
+  if(b)runAction(b.dataset.cluster,b.dataset.node,b.dataset.action,b);
 });
-document.getElementById('refresh').addEventListener('click',()=>loadNodes().catch(err=>alert(err.message)));
-loadNodes().catch(err=>{tbody.innerHTML=`<tr><td colspan="5">${esc(err.message)}</td></tr>`;});
-setInterval(()=>loadNodes().catch(()=>{}),10000);
+document.getElementById('refresh').addEventListener('click',()=>loadClusters().catch(err=>alert(err.message)));
+loadClusters().catch(err=>{clustersEl.textContent=err.message;});
+setInterval(()=>loadClusters().catch(()=>{}),10000);
 </script>
 </body>
 </html>
