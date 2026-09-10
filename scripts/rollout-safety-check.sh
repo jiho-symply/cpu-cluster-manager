@@ -24,12 +24,20 @@ grep -Fq 'rpm -q docker-ce' scripts/ensure-compute-docker.sh || fail "automatic 
 grep -Fq 'RENT_ID_BEFORE=' scripts/ensure-compute-docker.sh || fail "Docker repair must track existing rent-node identity"
 grep -Fq 'RENT_ID_AFTER=' scripts/ensure-compute-docker.sh || fail "Docker repair must verify existing rent-node identity"
 grep -Fq 'DockerRootDir' scripts/ensure-compute-docker.sh || fail "Docker repair must preserve Docker root"
-if grep -Eq '^[[:space:]]*"?docker-ce-rootless-extras-' scripts/ensure-compute-docker.sh; then
-  fail "CentOS 7 repair must not install optional docker-ce-rootless-extras"
+
+grep -Fq 'docker-ce-rootless-extras-${TARGET_DOCKER_RPM}.x86_64.rpm' scripts/ensure-compute-docker.sh || fail "Docker 20.10.17 EL7 dependency closure must include rootless-extras"
+grep -Fq 'fuse3-libs-3.6.1-4.el7.x86_64.rpm' scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must pin fuse3-libs"
+grep -Fq 'fuse-overlayfs-0.7.2-6.el7_8.x86_64.rpm' scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must pin fuse-overlayfs"
+grep -Fq 'slirp4netns-0.4.3-4.el7_8.x86_64.rpm' scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must pin slirp4netns"
+grep -Fq "--disablerepo='*'" scripts/ensure-compute-docker.sh || fail "CentOS 7 Docker repair must not depend on retired yum repositories"
+if grep -Eq -- '--nodeps|--skip-broken' scripts/ensure-compute-docker.sh; then
+  fail "Docker repair must never bypass RPM dependency integrity"
 fi
-grep -Fq 'rootless-extras is deliberately excluded' scripts/ensure-compute-docker.sh || fail "rootless-extras exclusion policy marker missing"
+grep -Fq 'CENTOS_GPG_KEY=' scripts/ensure-compute-docker.sh || fail "CentOS Extras RPMs must be signature verified"
+grep -Fq 'verify_rpm_signature' scripts/ensure-compute-docker.sh || fail "pinned Docker repair RPMs must be signature verified"
+
 grep -Fq 'bash "$ROOT/scripts/ensure-compute-docker.sh"' node/install-node.sh || fail "compute installer must normalize legacy Docker before preflight"
 grep -Fq 'MIN_DOCKER_VERSION="20.10.10"' scripts/preflight.sh || fail "runtime baseline must include clone3-compatible Docker"
 grep -Fq 'MIN_DOCKER_API="1.41"' scripts/preflight.sh || fail "runtime API baseline must be 1.41"
 
-echo '[OK] rollout credential transport + legacy Docker repair guards'
+echo '[OK] rollout credential transport + complete legacy Docker repair guards'
