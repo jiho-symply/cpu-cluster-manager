@@ -4,7 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+PROM_TEST=""
+cleanup() {
+  if [ -n "$PROM_TEST" ]; then
+    docker rm -f "$PROM_TEST" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
 
 echo '== shell syntax =='
 while IFS= read -r -d '' f; do
@@ -81,12 +88,25 @@ docker run --rm \
   -v "$PWD/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
   prom/alertmanager:v0.34.0 check-config /etc/alertmanager/alertmanager.yml
 
-echo '== image/flag compatibility =='
+echo '== image compatibility =='
 docker run --rm prom/node-exporter:v1.12.1 --version >/dev/null
-docker run --rm prom/prometheus:v3.14.0 \
-  --storage.tsdb.wal-segment-size=8MB \
+
+echo '== Prometheus storage flag startup =='
+PROM_TEST="ccm-prometheus-flag-test-${RANDOM}-$$"
+docker run -d --name "$PROM_TEST" \
+  prom/prometheus:v3.14.0 \
+  --storage.tsdb.path=/prometheus-test \
+  --storage.tsdb.wal-segment-size=10MB \
   --storage.tsdb.retention.time=5y \
-  --storage.tsdb.retention.size=64MB \
-  --version >/dev/null
+  --storage.tsdb.retention.size=64MB >/dev/null
+sleep 2
+PROM_STATE="$(docker inspect -f '{{.State.Status}}' "$PROM_TEST")"
+if [ "$PROM_STATE" != "running" ]; then
+  echo "[ERROR] Prometheus failed to start with configured storage flags" >&2
+  docker logs "$PROM_TEST" >&2 || true
+  exit 1
+fi
+docker rm -f "$PROM_TEST" >/dev/null
+PROM_TEST=""
 
 echo '[OK] repository static checks passed'
