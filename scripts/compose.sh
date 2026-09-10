@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG="${CLUSTER_CONFIG:-cluster.local.env}"
+CONFIG="${CLUSTER_CONFIG:-/var/lib/cpu-cluster-manager/cluster.local.env}"
 [ -f "$CONFIG" ] || {
   echo "cluster config not found: $CONFIG" >&2
   echo "run: bash scripts/install-master.sh" >&2
@@ -21,7 +21,6 @@ get_cfg() {
 NODES="$(get_cfg NODES)"
 [ -n "$NODES" ] || { echo "NODES is empty in $CONFIG" >&2; exit 1; }
 NODE_COUNT="$(printf '%s' "$NODES" | awk -F',' '{print NF}')"
-# 32 MiB block budget per monitored host: compute nodes + the master itself.
 export ARCHIVE_RETENTION_SIZE="$(((NODE_COUNT + 1) * 32))MB"
 
 exec docker compose --env-file "$CONFIG" "$@"
