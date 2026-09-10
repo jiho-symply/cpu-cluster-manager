@@ -2,39 +2,29 @@
 set -euo pipefail
 
 ROLE="${1:?usage: write-deploy-state.sh <master|compute> [cluster-config]}"
-CONFIG="${2:-cluster.local.env}"
+CONFIG="${2:-/var/lib/cpu-cluster-manager/cluster.local.env}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_STATE="$ROOT/.cluster-source-state"
+DEST_DIR="/var/lib/cpu-cluster-manager"
+DEST="$DEST_DIR/deployed-version"
 
-repo_git() {
-  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    sudo -u "$SUDO_USER" git -C "$ROOT" "$@"
-  else
-    git -C "$ROOT" "$@"
-  fi
+[ -f "$SOURCE_STATE" ] || { echo "[ERROR] shared source stamp missing: $SOURCE_STATE" >&2; exit 2; }
+get_source() {
+  local key="$1"
+  awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$SOURCE_STATE"
 }
+COMMIT="$(get_source commit)"
+BRANCH="$(get_source branch)"
+REMOTE="$(get_source repository)"
+SOURCE_HASH="$(get_source source_hash)"
+CLUSTER="$(get_source cluster)"
 
-COMMIT="$(repo_git rev-parse HEAD 2>/dev/null)" || {
-  echo "[ERROR] cannot resolve deployed Git commit from $ROOT" >&2
-  exit 2
-}
-BRANCH="$(repo_git symbolic-ref --short -q HEAD 2>/dev/null || echo detached)"
-REMOTE="$(repo_git config --get remote.origin.url 2>/dev/null)" || {
-  echo "[ERROR] cannot resolve Git remote.origin.url from $ROOT" >&2
-  exit 2
-}
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "[ERROR] invalid source commit in $SOURCE_STATE" >&2; exit 2; }
+[[ "$SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || { echo "[ERROR] invalid source hash in $SOURCE_STATE" >&2; exit 2; }
 
-CLUSTER="-"
 if [ "$ROLE" = "master" ] && [ -f "$CONFIG" ]; then
   CLUSTER="$(awk -F= '$1=="CLUSTER" {sub(/^[^=]*=/,""); print; exit}' "$CONFIG")"
   CLUSTER="${CLUSTER:--}"
-elif [ "$ROLE" = "compute" ]; then
-  # Both validated clusters are homogeneous by host OS.
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  case "${ID:-}:${VERSION_ID:-}" in
-    ubuntu:20.04) CLUSTER="cluster1" ;;
-    centos:7|centos:7.*) CLUSTER="cluster2" ;;
-  esac
 fi
 
 TMP="$(mktemp)"
@@ -43,25 +33,23 @@ cat > "$TMP" <<EOF
 commit=$COMMIT
 branch=$BRANCH
 role=$ROLE
-cluster=$CLUSTER
+cluster=${CLUSTER:--}
 host=$(hostname)
 deployed_at=$(date -Is)
 repository=$REMOTE
+source_hash=$SOURCE_HASH
 EOF
 
 case "$ROLE" in
   master)
-    DEST_DIR="$HOME/.local/state/cpu-cluster-manager"
+    [ "$(id -u)" -ne 0 ] || { echo "[ERROR] master deploy-state must be written by ysadmin" >&2; exit 2; }
     install -d -m 0700 "$DEST_DIR"
-    install -m 0600 "$TMP" "$DEST_DIR/deployed-version"
-    DEST="$DEST_DIR/deployed-version"
+    install -m 0600 "$TMP" "$DEST"
     ;;
   compute)
     [ "$(id -u)" -eq 0 ] || { echo "[ERROR] compute deploy-state write requires root" >&2; exit 2; }
-    DEST_DIR="/var/lib/cpu-cluster-manager"
     install -d -m 0755 "$DEST_DIR"
-    install -m 0644 "$TMP" "$DEST_DIR/deployed-version"
-    DEST="$DEST_DIR/deployed-version"
+    install -m 0644 "$TMP" "$DEST"
     ;;
   *)
     echo "[ERROR] unsupported role: $ROLE" >&2
