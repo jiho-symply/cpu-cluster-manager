@@ -62,6 +62,8 @@ bash scripts/install-master.sh
 
 If `ADMIN_PASSWORD` is blank, a random password is written back to the same mode-600 file.
 
+Master install runs as `ysadmin` without sudo. A successful install requires FastAPI/Grafana health checks and stable state/restart counts for all six master containers.
+
 The installer does not replace Docker Engine or modify site firewall/iptables policy.
 
 ## Compute install
@@ -127,6 +129,14 @@ bash scripts/verify-cluster.sh
 
 Deployment metadata:
 
+Master:
+
+```bash
+cat ~/.local/state/cpu-cluster-manager/deployed-version
+```
+
+Compute:
+
 ```bash
 cat /var/lib/cpu-cluster-manager/deployed-version
 ```
@@ -143,9 +153,12 @@ Compute node:
 
 Master:
 
+- Dockerized node_exporter on the internal Compose network
 - Prometheus Hot: 30s / 30d
 - Prometheus Archive: 5m min/avg/max / max 5y
 - Grafana automatic `$__interval`
 - disk-capacity alerts only
 
-Archive stores 18 series per compute node with a persistent-block cap of 32 MB/node and an 8 MB WAL segment. This is designed to remain comfortably below the requested 100 MB/node archive budget under normal operation, while acknowledging transient Prometheus head/WAL/compaction overhead.
+Archive compute cardinality is 18 series per compute node. Persistent block budget is 32 MB per monitored host (master + compute). Archive WAL segment size is **10 MB**, which is the minimum accepted by Prometheus 3.14. The first Cluster 1 pilot caught and corrected an invalid earlier 8 MB setting; CI now performs an actual Prometheus startup check with the configured storage flags so this class of error is detected before deployment.
+
+The block budget does not hard-cap transient Prometheus head/WAL/compaction overhead. Actual master disk usage should be observed during pilot operation.
