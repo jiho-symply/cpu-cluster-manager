@@ -5,4 +5,5 @@ ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin restart
 ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin recreate
 ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin reset-password
 ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin logs
+ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin reboot
 ysadmin ALL=(root) NOPASSWD: /usr/local/sbin/cluster-node-admin poweroff
