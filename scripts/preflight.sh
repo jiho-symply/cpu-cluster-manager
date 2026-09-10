@@ -71,11 +71,9 @@ if [ "$PLATFORM" = "centos7" ]; then
 fi
 
 if [ "$ROLE" = "master" ] || [ "$ROLE" = "all" ]; then
-  need_cmds curl ssh-keygen ssh-keyscan sudo
+  need_cmds curl ssh-keygen ssh-keyscan
   docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 plugin is required on master"
   say "Compose" "$(docker compose version --short 2>/dev/null || docker compose version)"
-  sudo -n true >/dev/null 2>&1 || fail "passwordless sudo is required for ysadmin on master (sudo -n true failed)"
-  say "passwordless sudo" "ok"
 fi
 
 if [ "$ROLE" = "compute" ] || [ "$ROLE" = "all" ]; then
