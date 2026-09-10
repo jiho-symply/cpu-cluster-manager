@@ -31,8 +31,13 @@ echo '[OK] no git -C dependency in runtime scripts'
 
 echo '== rent image APT policy =='
 DOCKERFILE=node/rent-image/Dockerfile
+MIRROR='http://kr.archive.ubuntu.com/ubuntu'
 grep -q '^ARG UBUNTU_MIRROR=http://kr.archive.ubuntu.com/ubuntu$' "$DOCKERFILE" || {
   echo '[ERROR] rental image must default to the official Korean Ubuntu country mirror' >&2
+  exit 1
+}
+grep -Fq 'sed -ri "s#https?://(archive|security)\.ubuntu\.com/ubuntu#${UBUNTU_MIRROR}#g"' "$DOCKERFILE" || {
+  echo '[ERROR] rental image mirror rewrite expression is not the validated form' >&2
   exit 1
 }
 APT_UPDATE_COUNT="$(grep -c 'apt-get update' "$DOCKERFILE")"
@@ -40,7 +45,22 @@ APT_UPDATE_COUNT="$(grep -c 'apt-get update' "$DOCKERFILE")"
   echo "[ERROR] rental image must run apt-get update once, found $APT_UPDATE_COUNT" >&2
   exit 1
 }
-echo '[OK] Korean Ubuntu mirror + single apt-get update'
+MIRROR_TEST_OUTPUT="$(printf '%s\n' \
+  'deb http://archive.ubuntu.com/ubuntu jammy main' \
+  'deb http://security.ubuntu.com/ubuntu jammy-security main' \
+  | sed -r "s#https?://(archive|security)\.ubuntu\.com/ubuntu#${MIRROR}#g")"
+if grep -Eq 'archive\.ubuntu\.com|security\.ubuntu\.com' <<<"$MIRROR_TEST_OUTPUT"; then
+  echo '[ERROR] mirror rewrite left a global Ubuntu archive URL unchanged' >&2
+  printf '%s\n' "$MIRROR_TEST_OUTPUT" >&2
+  exit 1
+fi
+MIRROR_COUNT="$(grep -cF "$MIRROR" <<<"$MIRROR_TEST_OUTPUT")"
+[ "$MIRROR_COUNT" -eq 2 ] || {
+  echo '[ERROR] mirror rewrite did not map both archive and security URLs' >&2
+  printf '%s\n' "$MIRROR_TEST_OUTPUT" >&2
+  exit 1
+}
+echo '[OK] Korean Ubuntu mirror rewrite + single apt-get update'
 
 echo '== Python syntax =='
 python3 -m compileall -q manager/app
