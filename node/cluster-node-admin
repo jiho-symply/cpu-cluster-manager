@@ -3,6 +3,7 @@ set -euo pipefail
 
 RENTCTL="/src/rent/image/rentctl.sh"
 CONTAINER_NAME="${CONTAINER_NAME:-rent-node}"
+DEPLOY_STATE="/var/lib/cpu-cluster-manager/deployed-version"
 ACTION="${1:-}"
 
 need_root() {
@@ -13,10 +14,11 @@ need_root() {
 }
 
 summary() {
-  local status uptime renter
+  local status uptime renter commit
   status="missing"
   uptime=""
   renter="-"
+  commit="-"
 
   if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
     status="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME")"
@@ -27,9 +29,15 @@ summary() {
     fi
   fi
 
+  if [ -f "$DEPLOY_STATE" ]; then
+    commit="$(awk -F= '$1=="commit" {print $2; exit}' "$DEPLOY_STATE")"
+    [ -n "$commit" ] || commit="-"
+  fi
+
   printf 'CONTAINER_STATUS=%s\n' "$status"
   printf 'CONTAINER_UPTIME=%s\n' "$uptime"
   printf 'RENTER=%s\n' "$renter"
+  printf 'DEPLOY_COMMIT=%s\n' "$commit"
 }
 
 need_root
