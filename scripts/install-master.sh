@@ -191,13 +191,15 @@ bash ./scripts/render-monitoring-targets.sh "$CONFIG" monitoring/targets
 
 # Install a minimal root-owned Unix-socket helper for master poweroff. The web
 # container never receives Docker socket access, host PID namespace, or broad
-# sudo privileges.
+# sudo privileges. enable/start are separate for CentOS 7 systemd 219, which
+# predates `systemctl enable --now`.
 echo "[INFO] installing restricted master poweroff socket"
 sudo install -m 0755 "$ROOT/master/cluster-master-control" /usr/local/sbin/cluster-master-control
 sudo install -m 0644 "$ROOT/master/systemd/cpu-cluster-master-control.socket" /etc/systemd/system/cpu-cluster-master-control.socket
 sudo install -m 0644 "$ROOT/master/systemd/cpu-cluster-master-control@.service" /etc/systemd/system/cpu-cluster-master-control@.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now cpu-cluster-master-control.socket >/dev/null
+sudo systemctl enable cpu-cluster-master-control.socket >/dev/null
+sudo systemctl start cpu-cluster-master-control.socket
 sudo test -S "$MASTER_CONTROL_SOCKET" || { echo "[ERROR] master control socket was not created: $MASTER_CONTROL_SOCKET" >&2; exit 2; }
 echo "[OK] restricted master control socket: $MASTER_CONTROL_SOCKET"
 
