@@ -54,7 +54,13 @@ for entry in "${ENTRIES[@]}"; do
   echo
 done
 
-for c in cpu-cluster-manager cpu-cluster-prometheus-hot cpu-cluster-prometheus-archive cpu-cluster-alertmanager cpu-cluster-grafana; do
+for c in \
+  cpu-cluster-manager \
+  cpu-cluster-master-node-exporter \
+  cpu-cluster-prometheus-hot \
+  cpu-cluster-prometheus-archive \
+  cpu-cluster-alertmanager \
+  cpu-cluster-grafana; do
   state="$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo missing)"
   if [ "$state" = "running" ]; then
     echo "[OK] master service $c: running"
@@ -63,6 +69,14 @@ for c in cpu-cluster-manager cpu-cluster-prometheus-hot cpu-cluster-prometheus-a
     FAIL=1
   fi
 done
+
+TARGET_FILE="monitoring/targets/node-exporter.json"
+if [ -f "$TARGET_FILE" ] && grep -q 'master-node-exporter:9100' "$TARGET_FILE"; then
+  echo "[OK] master node_exporter target generated"
+else
+  echo "[FAIL] master node_exporter target missing" >&2
+  FAIL=1
+fi
 
 if [ "$FAIL" -ne 0 ]; then
   echo "[ERROR] cluster verification failed" >&2
