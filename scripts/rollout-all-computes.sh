@@ -44,9 +44,6 @@ echo "=================================================="
 printf '  %s\n' "${ENTRIES[@]}"
 echo
 
-# First bring the master itself to the current checked-out source while it still
-# references only already-managed nodes. This stamps the exact source revision
-# and publishes the manager public key consumed by compute installation.
 echo "[1/7] Preparing current master/source state"
 bash "$ROOT/scripts/install-master.sh" "$CONFIG"
 bash "$ROOT/scripts/verify-manager-ssh.sh" "$CONFIG"
@@ -82,8 +79,7 @@ ssh-keygen -q -t ed25519 -N '' -C "$MARKER" -f "$BOOT_KEY"
 cat "$BOOT_KEY.pub" >> "$AUTHORIZED_KEYS"
 BOOTSTRAP_ACTIVE=1
 
-ssh_opts=(
-  -T
+ssh_common=(
   -i "$BOOT_KEY"
   -o BatchMode=yes
   -o IdentitiesOnly=yes
@@ -102,26 +98,20 @@ for entry in "${ENTRIES[@]}"; do
 done
 chmod 0600 "$BOOT_KNOWN_HOSTS"
 
-# The committed private-IP map is never trusted blindly. Before any sudo or
-# installation, authenticate with the temporary shared-home key and require
-# the remote hostname to match the inventory exactly.
 echo "[3/7] Verifying hostname <-> private-IP inventory before installation"
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
   host="${entry#*@}"
-  actual="$(ssh "${ssh_opts[@]}" "$ADMIN_USER@$host" 'hostname -s' 2>/dev/null || true)"
+  actual="$(ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'hostname -s' 2>/dev/null || true)"
   [ "$actual" = "$name" ] || fail "inventory mismatch: expected $name at $host, remote hostname=${actual:--}"
   echo "[OK] $name = $host"
 done
 
-# Preflight sudo on every host before modifying any compute. If NOPASSWD is not
-# available, read one site-admin password into shell memory only. It is never
-# written to disk or placed on a process command line.
 echo "[4/7] Preflighting sudo on every compute"
 NEED_PASSWORD=0
 for entry in "${ENTRIES[@]}"; do
   host="${entry#*@}"
-  if ! ssh "${ssh_opts[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
+  if ! ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
     NEED_PASSWORD=1
   fi
 done
@@ -136,10 +126,10 @@ fi
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
   host="${entry#*@}"
-  if ssh "${ssh_opts[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
+  if ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
     :
   else
-    if ! printf '%s\n' "$SUDO_PASS" | ssh "${ssh_opts[@]}" "$ADMIN_USER@$host" "sudo -S -p '' true" >/dev/null 2>&1; then
+    if ! printf '%s\n' "$SUDO_PASS" | ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" "sudo -S -p '' true" >/dev/null 2>&1; then
       fail "sudo authentication preflight failed on $name ($host); no compute was modified"
     fi
   fi
@@ -147,19 +137,22 @@ done
 echo "[OK] sudo preflight passed on all ${#ENTRIES[@]} computes"
 
 run_remote_install() {
-  local entry="$1" name host log remote_cmd rc
+  local entry="$1" name host log rc
   name="${entry%%@*}"
   host="${entry#*@}"
   log="$BOOT_DIR/${name}.log"
-  remote_cmd="cd '$ROOT' && sudo -S -p '' bash node/install-node.sh '$ROOT/.cluster-manager.pub' && bash node/verify-node.sh"
 
   echo "[INSTALL] $name ($host)"
   set +e
-  if ssh "${ssh_opts[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
-    ssh "${ssh_opts[@]}" "$ADMIN_USER@$host" "cd '$ROOT' && sudo -n bash node/install-node.sh '$ROOT/.cluster-manager.pub' && bash node/verify-node.sh" >"$log" 2>&1
+  if ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
+    ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" \
+      "cd '$ROOT' && sudo -n bash node/install-node.sh '$ROOT/.cluster-manager.pub' && bash node/verify-node.sh" \
+      >"$log" 2>&1
     rc=$?
   else
-    printf '%s\n' "$SUDO_PASS" | ssh "${ssh_opts[@]}" "$ADMIN_USER@$host" "$remote_cmd" >"$log" 2>&1
+    printf '%s\n' "$SUDO_PASS" | ssh -tt "${ssh_common[@]}" "$ADMIN_USER@$host" \
+      "cd '$ROOT' && sudo -S -p '' bash node/install-node.sh '$ROOT/.cluster-manager.pub' && bash node/verify-node.sh" \
+      >"$log" 2>&1
     rc=$?
   fi
   set -e
@@ -170,21 +163,17 @@ run_remote_install() {
     return "$rc"
   fi
   echo "[OK] $name installed and verified"
-  grep -E '^\[CREDENTIAL\]' "$log" || true
+  tr -d '\r' < "$log" | grep -E '^\[CREDENTIAL\]' || true
 }
 
 # /home/ysadmin is shared inside each cluster. node/install-node.sh updates the
 # shared authorized_keys file, so compute installs are intentionally serialized
-# to avoid concurrent writers on the same NFS-backed file. This is slower than
-# parallel installation but removes a real state-corruption race.
+# to avoid concurrent writers on the same NFS-backed file.
 echo "[5/7] Installing/updating all computes sequentially"
 for entry in "${ENTRIES[@]}"; do
   run_remote_install "$entry" || fail "compute rollout failed; master NODES was not expanded"
 done
 
-# Remove the unrestricted bootstrap credential before switching the manager to
-# the full inventory. From this point only the restricted manager SSH key path
-# installed by node/install-node.sh remains.
 cleanup_bootstrap
 trap - EXIT INT TERM
 
@@ -202,8 +191,6 @@ mv "$tmp_cfg" "$CONFIG"
 echo "[OK] full inventory written to $CONFIG"
 echo "[BACKUP] previous config: $BACKUP"
 
-# Re-render host keys/targets and restart only the master-side management stack
-# as required by Compose. Existing renter containers on computes are untouched.
 bash "$ROOT/scripts/install-master.sh" "$CONFIG"
 bash "$ROOT/scripts/verify-manager-ssh.sh" "$CONFIG"
 
