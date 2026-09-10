@@ -18,6 +18,9 @@ echo '== shell syntax =='
 while IFS= read -r -d '' f; do
   bash -n "$f"
 done < <(find . -type f -name '*.sh' -print0)
+for f in master/cluster-master-control node/cluster-node-admin node/cluster-node-ssh; do
+  bash -n "$f"
+done
 
 echo '== host role separation =='
 for f in scripts/install-master.sh node/install-node.sh node/update-node.sh node/verify-node.sh; do
@@ -31,7 +34,7 @@ grep -Fq 'this host is a cluster master; node/verify-node.sh is compute-only' no
 echo '[OK] master/compute role guards present'
 
 echo '== CentOS 7 Git compatibility =='
-if grep -R -n --exclude=static-check.sh 'git -C ' scripts node >/tmp/ccm-git-c-usage.$$ 2>/dev/null; then
+if grep -R -n --exclude=static-check.sh 'git -C ' scripts node master >/tmp/ccm-git-c-usage.$$ 2>/dev/null; then
   cat /tmp/ccm-git-c-usage.$$ >&2
   rm -f /tmp/ccm-git-c-usage.$$
   echo '[ERROR] runtime scripts must not use git -C; CentOS 7 Git 1.8.x may not support it' >&2
@@ -52,18 +55,46 @@ MIRROR_TEST_EXPECTED="$(printf '%s\n' 'deb http://kr.archive.ubuntu.com/ubuntu j
 [ "$MIRROR_TEST_OUTPUT" = "$MIRROR_TEST_EXPECTED" ] || { echo '[ERROR] Ubuntu mirror rewrite output mismatch' >&2; exit 1; }
 echo '[OK] Korean Ubuntu mirror rewrite + single apt-get update'
 
+echo '== fixed password and federation policy =='
+grep -Fq 'ADMIN_PASSWORD=clustermanager' cluster.local.env.example || { echo '[ERROR] fixed campus management password missing from config template' >&2; exit 1; }
+grep -Fq 'FIXED_MANAGEMENT_PASSWORD="clustermanager"' scripts/install-master.sh || { echo '[ERROR] installer must enforce fixed campus management password' >&2; exit 1; }
+grep -Fq 'CLUSTER2_PEER_URL="http://165.132.142.133:8080"' scripts/install-master.sh || { echo '[ERROR] Cluster 1 federation peer URL is missing' >&2; exit 1; }
+grep -Fq 'PEER_HEADER = "X-CCM-Peer-Token"' manager/app/main.py || { echo '[ERROR] peer authentication header is missing' >&2; exit 1; }
+grep -Fq '@app.get("/api/clusters")' manager/app/main.py || { echo '[ERROR] federated cluster API is missing' >&2; exit 1; }
+grep -Fq 'f"/{PEER_CLUSTER}/grafana"' manager/app/main.py || { echo '[ERROR] peer Grafana path is missing' >&2; exit 1; }
+echo '[OK] fixed password + Cluster 1 federation policy'
+
+echo '== safe shutdown policy =='
+for f in node/cluster-node-admin node/cluster-node-ssh node/sudoers/cpu-cluster-manager manager/app/ssh_client.py; do
+  grep -Fq 'poweroff' "$f" || { echo "[ERROR] compute poweroff path missing from $f" >&2; exit 1; }
+done
+grep -Fq 'docker stop -t 30' node/cluster-node-admin || { echo '[ERROR] compute poweroff must stop rent-node first' >&2; exit 1; }
+grep -Fq 'systemctl poweroff --no-block' node/cluster-node-admin || { echo '[ERROR] compute poweroff must use systemd poweroff' >&2; exit 1; }
+grep -Fq 'ListenStream=/run/cpu-cluster-manager/master-control.sock' master/systemd/cpu-cluster-master-control.socket || { echo '[ERROR] master control socket unit missing' >&2; exit 1; }
+grep -Fq 'StandardInput=socket' master/systemd/cpu-cluster-master-control@.service || { echo '[ERROR] master control socket service missing' >&2; exit 1; }
+grep -Fq 'all compute nodes must be confirmed offline before master shutdown' manager/app/main.py || { echo '[ERROR] master shutdown precondition missing' >&2; exit 1; }
+grep -Fq 'data-shutdown-computes=' manager/app/templates/index.html || { echo '[ERROR] shutdown-computes UI control missing' >&2; exit 1; }
+grep -Fq 'data-shutdown-master=' manager/app/templates/index.html || { echo '[ERROR] shutdown-master UI control missing' >&2; exit 1; }
+echo '[OK] staged compute -> verify offline -> master shutdown path'
+
 echo '== unified management UI policy =='
 grep -Fq 'SESSION_COOKIE = "ccm_session"' manager/app/main.py || { echo '[ERROR] password-only session auth is missing' >&2; exit 1; }
 grep -Fq '@app.post("/api/login")' manager/app/main.py || { echo '[ERROR] password-only login endpoint is missing' >&2; exit 1; }
 grep -Fq '@app.get("/auth/check")' manager/app/main.py || { echo '[ERROR] gateway auth-check endpoint is missing' >&2; exit 1; }
 grep -Fq 'data-view="monitoring"' manager/app/templates/index.html || { echo '[ERROR] integrated Monitoring tab is missing' >&2; exit 1; }
 grep -Fq '<iframe id="grafana-frame"' manager/app/templates/index.html || { echo '[ERROR] embedded Grafana frame is missing' >&2; exit 1; }
-grep -Fq 'auth_request /_auth;' gateway/nginx.conf || { echo '[ERROR] Grafana gateway auth gate is missing' >&2; exit 1; }
-grep -Fq 'location /grafana/' gateway/nginx.conf || { echo '[ERROR] Grafana reverse proxy path is missing' >&2; exit 1; }
+for c in cluster1 cluster2; do
+  conf="gateway/nginx-${c}.conf"
+  grep -Fq 'auth_request /_auth;' "$conf" || { echo "[ERROR] Grafana auth gate missing from $conf" >&2; exit 1; }
+  grep -Fq "location /${c}/grafana/" "$conf" || { echo "[ERROR] local Grafana path missing from $conf" >&2; exit 1; }
+  docker run --rm --add-host cluster-manager:127.0.0.1 --add-host grafana:127.0.0.1 -v "$PWD/$conf:/etc/nginx/nginx.conf:ro" nginx:1.27-alpine nginx -t >/dev/null
+done
+grep -Fq 'location /cluster2/grafana/' gateway/nginx-cluster1.conf || { echo '[ERROR] Cluster 1 peer Grafana proxy missing' >&2; exit 1; }
+grep -Fq 'proxy_set_header X-CCM-Peer-Token clustermanager;' gateway/nginx-cluster1.conf || { echo '[ERROR] Cluster 1 peer Grafana authentication missing' >&2; exit 1; }
 grep -Fq -- '- "${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}:8080"' docker-compose.yml || { echo '[ERROR] gateway must be exposed only through UI_HOST:UI_PORT' >&2; exit 1; }
 grep -Fq -- '- "127.0.0.1:${GRAFANA_PORT:-3000}:3000"' docker-compose.yml || { echo '[ERROR] Grafana diagnostic port must remain loopback-only' >&2; exit 1; }
-grep -Fq 'GF_SERVER_ROOT_URL: http://${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}/grafana/' docker-compose.yml || { echo '[ERROR] Grafana root URL must use the unified /grafana/ endpoint' >&2; exit 1; }
-docker run --rm --add-host cluster-manager:127.0.0.1 --add-host grafana:127.0.0.1 -v "$PWD/gateway/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.27-alpine nginx -t >/dev/null
+grep -Fq 'GF_SERVER_ROOT_URL: http://${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}/${CLUSTER:?set CLUSTER in host-local cluster config}/grafana/' docker-compose.yml || { echo '[ERROR] Grafana root URL must use cluster-specific unified path' >&2; exit 1; }
+grep -Fq '/run/cpu-cluster-manager/master-control.sock:/run/master-control.sock' docker-compose.yml || { echo '[ERROR] restricted master control socket is not mounted into manager' >&2; exit 1; }
 echo '[OK] password-only unified Control/Monitoring gateway configuration'
 
 echo '== Python syntax =='
@@ -78,13 +109,26 @@ for path in Path('monitoring/grafana/dashboards').glob('*.json'):
     print(f'[OK] {path}')
 PY
 
-cat > "$TMP/cluster.env" <<'EOF'
+cat > "$TMP/cluster1.env" <<'EOF'
 CLUSTER=cluster1
 NODES=kfai-cpu-01@192.168.100.11,kfai-cpu-02@192.168.100.12
 ADMIN_USERNAME=clusteradmin
-ADMIN_PASSWORD=ci-only-password
+ADMIN_PASSWORD=clustermanager
 UI_HOST=127.0.0.1
 UI_PORT=18080
+PEER_CLUSTER=cluster2
+PEER_URL=http://165.132.142.133:8080
+GRAFANA_PORT=13000
+EOF
+cat > "$TMP/cluster2.env" <<'EOF'
+CLUSTER=cluster2
+NODES=kfai-cpu-10@172.20.1.4,kfai-cpu-11@172.20.1.5
+ADMIN_USERNAME=clusteradmin
+ADMIN_PASSWORD=clustermanager
+UI_HOST=127.0.0.1
+UI_PORT=18080
+PEER_CLUSTER=
+PEER_URL=
 GRAFANA_PORT=13000
 EOF
 cat > "$TMP/ubuntu-os-release" <<'EOF'
@@ -97,7 +141,7 @@ VERSION_ID="7"
 EOF
 
 echo '== shared source stamp =='
-bash scripts/write-source-state.sh "$TMP/cluster.env"
+bash scripts/write-source-state.sh "$TMP/cluster1.env"
 STAMP_COMMIT="$(awk -F= '$1=="commit" {print $2; exit}' .cluster-source-state)"
 STAMP_HASH="$(awk -F= '$1=="source_hash" {print $2; exit}' .cluster-source-state)"
 CURRENT_HASH="$(bash scripts/source-hash.sh)"
@@ -107,11 +151,11 @@ echo "[OK] source stamp: ${STAMP_COMMIT:0:12} / ${STAMP_HASH:0:12}"
 
 echo '== target renderer: Ubuntu 20.04 =='
 mkdir -p "$TMP/targets-ubuntu"
-OS_RELEASE_FILE="$TMP/ubuntu-os-release" bash scripts/render-monitoring-targets.sh "$TMP/cluster.env" "$TMP/targets-ubuntu"
+OS_RELEASE_FILE="$TMP/ubuntu-os-release" bash scripts/render-monitoring-targets.sh "$TMP/cluster1.env" "$TMP/targets-ubuntu"
 
 echo '== target renderer: CentOS 7 =='
 mkdir -p "$TMP/targets-centos"
-OS_RELEASE_FILE="$TMP/centos-os-release" bash scripts/render-monitoring-targets.sh "$TMP/cluster.env" "$TMP/targets-centos"
+OS_RELEASE_FILE="$TMP/centos-os-release" bash scripts/render-monitoring-targets.sh "$TMP/cluster2.env" "$TMP/targets-centos"
 
 python3 - "$TMP/targets-ubuntu/node-exporter.json" "$TMP/targets-centos/node-exporter.json" <<'PY'
 import json, sys
@@ -125,7 +169,9 @@ for fn in sys.argv[1:]:
 PY
 
 echo '== Docker Compose interpolation =='
-ARCHIVE_RETENTION_SIZE=96MB docker compose --env-file "$TMP/cluster.env" config >/dev/null
+ARCHIVE_RETENTION_SIZE=96MB docker compose --env-file "$TMP/cluster1.env" config >/dev/null
+ARCHIVE_RETENTION_SIZE=96MB docker compose --env-file "$TMP/cluster2.env" config >/dev/null
+echo '[OK] Cluster 1 and Cluster 2 Compose render'
 
 echo '== Prometheus config/rules =='
 docker run --rm --entrypoint /bin/promtool -v "$PWD/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$PWD/monitoring/prometheus/rules:/etc/prometheus/rules:ro" -v "$TMP/targets-ubuntu:/etc/prometheus/targets:ro" prom/prometheus:v3.14.0 check config /etc/prometheus/prometheus.yml
