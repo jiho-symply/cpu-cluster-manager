@@ -3,7 +3,9 @@ set -euo pipefail
 
 CONFIG="${1:-cluster.local.env}"
 OUTPUT="${2:-monitoring/targets}"
+OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 [ -f "$CONFIG" ] || { echo "cluster config not found: $CONFIG" >&2; exit 1; }
+[ -f "$OS_RELEASE_FILE" ] || { echo "os-release file not found: $OS_RELEASE_FILE" >&2; exit 1; }
 mkdir -p "$OUTPUT"
 
 get_cfg() {
@@ -17,9 +19,10 @@ NODES_SPEC="$(get_cfg NODES)"
 [ -n "$NODES_SPEC" ] || { echo "NODES is empty in $CONFIG" >&2; exit 2; }
 case "$CLUSTER" in (*[!A-Za-z0-9_.-]*|'') echo "invalid CLUSTER: $CLUSTER" >&2; exit 2;; esac
 
-# Platform is derived from the actual master OS. Both clusters are homogeneous.
-# shellcheck disable=SC1091
-. /etc/os-release
+# Platform is derived from the actual master OS in production. OS_RELEASE_FILE
+# exists only so CI can test both supported platforms without special hosts.
+# shellcheck disable=SC1090
+. "$OS_RELEASE_FILE"
 case "${ID:-}:${VERSION_ID:-}" in
   ubuntu:20.04) PLATFORM="ubuntu20" ;;
   centos:7|centos:7.*) PLATFORM="centos7" ;;
