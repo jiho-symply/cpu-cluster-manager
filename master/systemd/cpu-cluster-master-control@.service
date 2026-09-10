@@ -1,0 +1,13 @@
+[Unit]
+Description=CPU Cluster Manager restricted master control connection
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/cluster-master-control
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
