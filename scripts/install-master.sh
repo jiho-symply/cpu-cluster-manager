@@ -105,6 +105,7 @@ wait_http() {
 wait_http "FastAPI" "http://127.0.0.1:${UI_PORT}/healthz"
 wait_http "Grafana" "http://127.0.0.1:${GRAFANA_PORT}/api/health"
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh ps
+bash ./scripts/write-deploy-state.sh master "$CONFIG"
 
 if [ "$GENERATED_ADMIN_PASSWORD" -eq 1 ]; then
   echo
