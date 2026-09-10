@@ -21,3 +21,4 @@ jobs:
           bash scripts/check-manager-container-security.sh
           bash scripts/credential-ui-check.sh
           bash scripts/rollout-safety-check.sh
+          bash scripts/release-bundle-check.sh
