@@ -31,6 +31,11 @@ if [ -z "$PUBKEY_FILE" ] || [ ! -f "$PUBKEY_FILE" ]; then
   exit 2
 fi
 
+# Freshly discovered CentOS 7 computes may still carry Docker 18.09. Normalize
+# only the supported docker-ce package family to the same validated 20.10.17
+# baseline used by the existing CentOS nodes. This preserves /var/lib/docker
+# and any existing rent-node container identity/data.
+bash "$ROOT/scripts/ensure-compute-docker.sh"
 bash "$ROOT/scripts/preflight.sh" compute
 
 [ -f "$SOURCE_STATE" ] || {
