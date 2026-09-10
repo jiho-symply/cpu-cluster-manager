@@ -24,6 +24,10 @@ grep -Fq 'rpm -q docker-ce' scripts/ensure-compute-docker.sh || fail "automatic 
 grep -Fq 'RENT_ID_BEFORE=' scripts/ensure-compute-docker.sh || fail "Docker repair must track existing rent-node identity"
 grep -Fq 'RENT_ID_AFTER=' scripts/ensure-compute-docker.sh || fail "Docker repair must verify existing rent-node identity"
 grep -Fq 'DockerRootDir' scripts/ensure-compute-docker.sh || fail "Docker repair must preserve Docker root"
+if grep -Eq '^[[:space:]]*"?docker-ce-rootless-extras-' scripts/ensure-compute-docker.sh; then
+  fail "CentOS 7 repair must not install optional docker-ce-rootless-extras"
+fi
+grep -Fq 'rootless-extras is deliberately excluded' scripts/ensure-compute-docker.sh || fail "rootless-extras exclusion policy marker missing"
 grep -Fq 'bash "$ROOT/scripts/ensure-compute-docker.sh"' node/install-node.sh || fail "compute installer must normalize legacy Docker before preflight"
 grep -Fq 'MIN_DOCKER_VERSION="20.10.10"' scripts/preflight.sh || fail "runtime baseline must include clone3-compatible Docker"
 grep -Fq 'MIN_DOCKER_API="1.41"' scripts/preflight.sh || fail "runtime API baseline must be 1.41"
