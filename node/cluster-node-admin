@@ -41,8 +41,9 @@ summary() {
 }
 
 poweroff_host() {
-  # Stop the renter workload first. docker stop is idempotent enough for an
-  # already-stopped container and gives the container up to 30 seconds to exit.
+  # Cluster-wide shutdown only. Stop the renter workload first and then power
+  # the compute host off; this action is intentionally not exposed as an
+  # individual-node UI control.
   if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
     state="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME")"
     if [ "$state" = "running" ]; then
@@ -56,6 +57,16 @@ poweroff_host() {
   systemctl poweroff --no-block
 }
 
+reboot_host() {
+  # Do not issue `docker stop` here. The rent container uses
+  # --restart unless-stopped; a manual docker stop could suppress the expected
+  # automatic return after the Docker daemon comes back. Let systemd/Docker
+  # perform their normal graceful shutdown during reboot instead.
+  sync
+  printf 'REBOOT_REQUESTED=1\n'
+  systemctl reboot --no-block
+}
+
 need_root
 case "$ACTION" in
   summary) summary ;;
@@ -65,9 +76,10 @@ case "$ACTION" in
   recreate) "$RENTCTL" recreate ;;
   reset-password) "$RENTCTL" reset-password ;;
   logs) docker logs --tail 200 "$CONTAINER_NAME" 2>&1 ;;
+  reboot) reboot_host ;;
   poweroff) poweroff_host ;;
   *)
-    echo "usage: $0 {summary|start|stop|restart|recreate|reset-password|logs|poweroff}" >&2
+    echo "usage: $0 {summary|start|stop|restart|recreate|reset-password|logs|reboot|poweroff}" >&2
     exit 2
     ;;
 esac
