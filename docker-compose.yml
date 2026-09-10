@@ -22,6 +22,7 @@ services:
       - no-new-privileges:true
 
   cluster-manager:
+    image: cpu-cluster-manager-app:local
     build:
       context: ./manager
     container_name: cpu-cluster-manager
@@ -92,6 +93,22 @@ services:
     depends_on:
       - prometheus-hot
 
+  prometheus-router:
+    image: cpu-cluster-manager-app:local
+    container_name: cpu-cluster-prometheus-router
+    restart: unless-stopped
+    command: ["uvicorn", "app.prometheus_router:app", "--host", "0.0.0.0", "--port", "8080"]
+    depends_on:
+      - prometheus-hot
+      - prometheus-archive
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   alertmanager:
     image: prom/alertmanager:v0.34.0
     container_name: cpu-cluster-alertmanager
@@ -117,15 +134,14 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_SERVER_DOMAIN: ${UI_HOST:?set UI_HOST in host-local cluster config}
       GF_SERVER_ROOT_URL: http://${UI_HOST}:${UI_PORT:-8080}/${CLUSTER}/grafana/
-      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/cluster-recent.json
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/cluster-monitoring.json
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
-      - prometheus-hot
-      - prometheus-archive
+      - prometheus-router
 
 volumes:
   prometheus_hot_data:
