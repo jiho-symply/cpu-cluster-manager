@@ -1,8 +1,6 @@
 cluster.local.env
-.env
-config/nodes.yaml
-secrets/
 monitoring/targets/*.json
+!monitoring/targets/.gitkeep
 __pycache__/
 *.py[cod]
 .venv/
