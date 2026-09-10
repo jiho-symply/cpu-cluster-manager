@@ -6,7 +6,7 @@ services:
     ports:
       - "${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}:8080"
     volumes:
-      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./gateway/nginx-${CLUSTER:?set CLUSTER in host-local cluster config}.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - cluster-manager
       - grafana
@@ -28,12 +28,15 @@ services:
       NODES: ${NODES:?set NODES in host-local cluster config}
       SSH_USER: ysadmin
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in host-local cluster config}
+      PEER_CLUSTER: ${PEER_CLUSTER:-}
+      PEER_URL: ${PEER_URL:-}
       SSH_KEY: /run/ssh/id_ed25519
       SSH_KNOWN_HOSTS: /run/ssh/known_hosts
-      GRAFANA_BASE_URL: /grafana
+      MASTER_CONTROL_SOCKET: /run/master-control.sock
     volumes:
       - /var/lib/cpu-cluster-manager/ssh/id_ed25519:/run/ssh/id_ed25519:ro
       - /var/lib/cpu-cluster-manager/ssh/known_hosts:/run/ssh/known_hosts:ro
+      - /run/cpu-cluster-manager/master-control.sock:/run/master-control.sock
     read_only: true
     tmpfs:
       - /tmp
@@ -110,7 +113,7 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_SERVER_DOMAIN: ${UI_HOST:?set UI_HOST in host-local cluster config}
-      GF_SERVER_ROOT_URL: http://${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}/grafana/
+      GF_SERVER_ROOT_URL: http://${UI_HOST:?set UI_HOST in host-local cluster config}:${UI_PORT:-8080}/${CLUSTER:?set CLUSTER in host-local cluster config}/grafana/
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/cluster-recent.json
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
