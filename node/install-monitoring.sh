@@ -59,8 +59,11 @@ install -m 0644 "$SCRIPT_DIR/systemd/rent-node-metrics.service" /etc/systemd/sys
 install -m 0644 "$SCRIPT_DIR/systemd/rent-node-metrics.timer" /etc/systemd/system/rent-node-metrics.timer
 
 systemctl daemon-reload
-systemctl enable --now node-exporter.service
-systemctl enable --now rent-node-metrics.timer
+systemctl enable node-exporter.service >/dev/null
+systemctl restart node-exporter.service
+systemctl enable rent-node-metrics.timer >/dev/null
+# Restart is intentional: existing 30s timers must immediately adopt the 5s cadence.
+systemctl restart rent-node-metrics.timer
 systemctl start rent-node-metrics.service
 
 for _ in $(seq 1 20); do
