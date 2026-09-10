@@ -13,7 +13,7 @@ alerting:
             - alertmanager:9093
 
 scrape_configs:
-  - job_name: compute-node
+  - job_name: node-exporter
     file_sd_configs:
       - files:
           - /etc/prometheus/targets/node-exporter.json
@@ -21,7 +21,7 @@ scrape_configs:
     metric_relabel_configs:
       # Total host CPU utilization only needs idle counters. Dropping the other
       # per-core modes substantially reduces 30-day hot-storage cardinality on
-      # large 96-thread servers without losing the dashboard metric we use.
+      # large servers without losing the dashboard metric we use.
       - source_labels: [__name__, mode]
         regex: 'node_cpu_seconds_total;(guest|guest_nice|iowait|irq|nice|softirq|steal|system|user)'
         action: drop
