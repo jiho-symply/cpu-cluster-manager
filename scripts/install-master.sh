@@ -110,6 +110,7 @@ CLUSTER="$(get_cfg CLUSTER)"
 NODES="$(get_cfg NODES)"
 ADMIN_USERNAME="$(get_cfg ADMIN_USERNAME)"
 ADMIN_PASSWORD="$(get_cfg ADMIN_PASSWORD)"
+UI_HOST="$(get_cfg UI_HOST)"
 UI_PORT="$(get_cfg UI_PORT)"
 GRAFANA_PORT="$(get_cfg GRAFANA_PORT)"
 
@@ -118,6 +119,16 @@ GRAFANA_PORT="$(get_cfg GRAFANA_PORT)"
 ADMIN_USERNAME="${ADMIN_USERNAME:-clusteradmin}"
 UI_PORT="${UI_PORT:-8080}"
 GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+
+if [ -z "$UI_HOST" ] || [ "$UI_HOST" = "AUTODETECT" ]; then
+  UI_HOST="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+  if [ -z "$UI_HOST" ]; then
+    UI_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  [ -n "$UI_HOST" ] || { echo "[ERROR] could not autodetect UI_HOST; set UI_HOST=<master IPv4> in $CONFIG" >&2; exit 2; }
+  set_cfg UI_HOST "$UI_HOST"
+  echo "[AUTO] management UI host: $UI_HOST"
+fi
 
 GENERATED_ADMIN_PASSWORD=0
 if [ -z "$ADMIN_PASSWORD" ]; then
@@ -148,6 +159,7 @@ echo "[INFO] archive bucket         : 5m min/avg/max"
 echo "[INFO] shared source          : $ROOT"
 echo "[INFO] host-local state       : $STATE_DIR"
 echo "[INFO] host role              : master"
+echo "[INFO] management UI          : http://${UI_HOST}:${UI_PORT}"
 
 bash ./scripts/write-source-state.sh "$CONFIG"
 bash ./scripts/prepare-master-ssh.sh "$CONFIG" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts"
@@ -172,6 +184,7 @@ wait_http() {
 }
 
 MASTER_CONTAINERS=(
+  cpu-cluster-gateway
   cpu-cluster-manager
   cpu-cluster-master-node-exporter
   cpu-cluster-prometheus-hot
@@ -184,8 +197,6 @@ check_master_containers_stable() {
   local i name status2 restart2 failed=0
   local -a status1 restart1
 
-  # All containers share the same observation window. This preserves the
-  # previous status/restart-count test without sleeping once per container.
   for i in "${!MASTER_CONTAINERS[@]}"; do
     name="${MASTER_CONTAINERS[$i]}"
     status1[$i]="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo missing)"
@@ -210,8 +221,8 @@ check_master_containers_stable() {
   [ "$failed" -eq 0 ]
 }
 
-wait_http "FastAPI" "http://127.0.0.1:${UI_PORT}/healthz"
-wait_http "Grafana" "http://127.0.0.1:${GRAFANA_PORT}/api/health"
+wait_http "Management UI" "http://${UI_HOST}:${UI_PORT}/healthz"
+wait_http "Grafana local backend" "http://127.0.0.1:${GRAFANA_PORT}/api/health"
 check_master_containers_stable
 
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh ps
@@ -222,15 +233,16 @@ rm -f "$HOME/.local/state/cpu-cluster-manager/deployed-version" 2>/dev/null || t
 
 if [ "$GENERATED_ADMIN_PASSWORD" -eq 1 ]; then
   echo
-  echo "[CREDENTIAL] admin_username=$ADMIN_USERNAME"
-  echo "[CREDENTIAL] admin_password=$ADMIN_PASSWORD"
-  echo "[IMPORTANT] this credential is stored only in $CONFIG (mode 600)"
+  echo "[CREDENTIAL] management_password=$ADMIN_PASSWORD"
+  echo "[IMPORTANT] this password is stored only in $CONFIG (mode 600)"
 fi
 
 echo
 echo "[OK] master installation complete"
 echo "[INFO] operator-managed local config: $CONFIG"
-echo "[INFO] FastAPI: http://127.0.0.1:${UI_PORT}"
-echo "[INFO] Grafana: http://127.0.0.1:${GRAFANA_PORT}"
+echo "[INFO] Management UI: http://${UI_HOST}:${UI_PORT}"
+echo "[INFO] login: password only"
+echo "[INFO] Grafana: embedded under http://${UI_HOST}:${UI_PORT}/grafana/"
+echo "[INFO] Grafana backend diagnostic: http://127.0.0.1:${GRAFANA_PORT}"
 echo "[INFO] manager public key: $SSH_DIR/id_ed25519.pub"
 echo "[NEXT] on each compute node: cd $ROOT && sudo bash node/install-node.sh"
