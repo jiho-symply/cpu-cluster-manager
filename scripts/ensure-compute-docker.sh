@@ -65,10 +65,13 @@ TMP="$(mktemp -d /var/tmp/ccm-docker-upgrade.XXXXXX)"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
+# Only packages required by the rootful Docker daemon are included here.
+# docker-ce-rootless-extras is deliberately excluded: this cluster never runs
+# rootless dockerd, and that optional package pulls fuse-overlayfs/slirp4netns
+# dependencies that are unavailable on some EOL CentOS 7 hosts.
 RPM_FILES=(
   "containerd.io-${TARGET_CONTAINERD_RPM}.x86_64.rpm"
   "docker-ce-cli-${TARGET_DOCKER_RPM}.x86_64.rpm"
-  "docker-ce-rootless-extras-${TARGET_DOCKER_RPM}.x86_64.rpm"
   "docker-ce-${TARGET_DOCKER_RPM}.x86_64.rpm"
 )
 
@@ -88,10 +91,10 @@ for rpm_file in "${RPM_FILES[@]}"; do
     || fail "RPM signature verification failed: $rpm_file"
 done
 
-# Resolve only against already-installed CentOS dependencies plus the four
+# Resolve only against already-installed CentOS dependencies plus the three
 # pinned local Docker RPMs. This avoids depending on CentOS 7's retired mirrors.
 # yum resolves the full transaction before changing packages, so a missing
-# dependency fails before the Docker daemon is touched.
+# required dependency fails before the Docker daemon is touched.
 echo "[INFO] validating pinned Docker RPM transaction"
 yum -y --disablerepo='*' localinstall "${RPM_FILES[@]/#/$TMP/}"
 
