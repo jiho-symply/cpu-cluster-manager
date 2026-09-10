@@ -3,8 +3,6 @@ set -euo pipefail
 
 STATE_DIR="/var/lib/cpu-cluster-manager"
 ROLE_FILE="$STATE_DIR/role"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
 
 if [ "$(id -un)" != "ysadmin" ]; then
   echo "[ERROR] run this updater as ysadmin without sudo" >&2
@@ -21,16 +19,13 @@ if [ "$HOST_ROLE" = "master" ] || [ -f "$STATE_DIR/cluster.local.env" ]; then
   exit 2
 fi
 if [ "$HOST_ROLE" != "compute" ]; then
-  echo "[ERROR] host is not marked as an installed compute node; run sudo bash node/install-node.sh first" >&2
-  exit 2
-fi
-if [ ! -f "$STATE_DIR/manager.pub" ]; then
-  echo "[ERROR] stored manager public key is missing; run the initial compute installer first" >&2
-  exit 2
-fi
-if [ ! -f "$ROOT/.cluster-source-state" ]; then
-  echo "[ERROR] shared source stamp is missing; run the master installer/update first" >&2
+  echo "[ERROR] host is not marked as an installed compute node" >&2
   exit 2
 fi
 
-exec sudo bash ./node/install-node.sh "$STATE_DIR/manager.pub"
+# Compute updates are intentionally master-orchestrated. The master creates one
+# immutable Git-archive bundle, transfers it over SSH, verifies its checksum on
+# the compute, and only then executes the installer from the local snapshot.
+echo "[ERROR] direct compute update is disabled to avoid executing the mutable shared NFS working tree" >&2
+echo "        run: bash scripts/rollout-all-computes.sh on the cluster master" >&2
+exit 2
