@@ -6,7 +6,7 @@ cd "$ROOT"
 
 {
   printf '%s\0' docker-compose.yml cluster.local.env.example
-  find gateway manager monitoring node scripts \
+  find gateway manager master monitoring node scripts \
     -type f \
     ! -path 'monitoring/targets/*' \
     ! -path '*/__pycache__/*' \
