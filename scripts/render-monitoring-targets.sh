@@ -28,12 +28,16 @@ esac
 
 IFS=',' read -r -a ENTRIES <<< "$NODES_SPEC"
 [ "${#ENTRIES[@]}" -gt 0 ] || { echo "no compute nodes in $CONFIG" >&2; exit 2; }
+MASTER_NODE="$(hostname -s)"
+case "$MASTER_NODE" in (*[!A-Za-z0-9_.-]*|'') echo "invalid master hostname: $MASTER_NODE" >&2; exit 3;; esac
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 printf '[\n' > "$TMP"
-for i in "${!ENTRIES[@]}"; do
-  entry="${ENTRIES[$i]}"
+printf '  {"targets":["master-node-exporter:9100"],"labels":{"cluster":"%s","platform":"%s","node":"%s","role":"master"}}' \
+  "$CLUSTER" "$PLATFORM" "$MASTER_NODE" >> "$TMP"
+
+for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
   endpoint="${entry#*@}"
   [ "$endpoint" != "$entry" ] && [ -n "$name" ] && [ -n "$endpoint" ] || {
@@ -42,8 +46,7 @@ for i in "${!ENTRIES[@]}"; do
   }
   case "$name" in (*[!A-Za-z0-9_.-]*|'') echo "invalid node name: $name" >&2; exit 3;; esac
   case "$endpoint" in (*[!0-9.]*|'') echo "invalid private IPv4 for $name: $endpoint" >&2; exit 3;; esac
-  [ "$i" -eq 0 ] || printf ',\n' >> "$TMP"
-  printf '  {"targets":["%s:9100"],"labels":{"cluster":"%s","platform":"%s","node":"%s"}}' \
+  printf ',\n  {"targets":["%s:9100"],"labels":{"cluster":"%s","platform":"%s","node":"%s","role":"compute"}}' \
     "$endpoint" "$CLUSTER" "$PLATFORM" "$name" >> "$TMP"
 done
 printf '\n]\n' >> "$TMP"
@@ -52,5 +55,5 @@ mv "$TMP" "$OUTPUT/node-exporter.json"
 chmod 0644 "$OUTPUT/node-exporter.json"
 trap - EXIT
 
-echo "[OK] generated Prometheus targets for ${#ENTRIES[@]} nodes"
+echo "[OK] generated Prometheus targets: 1 master + ${#ENTRIES[@]} compute nodes"
 echo "[OK] $OUTPUT/node-exporter.json"
