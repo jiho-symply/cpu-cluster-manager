@@ -333,7 +333,7 @@ def api_nodes(_: str = Depends(require_admin)) -> JSONResponse:
 def node_action(name: str, action: str, _: str = Depends(require_admin)) -> JSONResponse:
     # Individual host poweroff is intentionally not exposed. Cluster-wide
     # shutdown still uses the private _shutdown_one()/poweroff path.
-    allowed = {"start", "stop", "restart", "recreate", "reset-password", "reboot"}
+    allowed = {"start", "stop", "restart", "recreate", "reset-password", "reset", "reboot"}
     if action not in allowed:
         raise HTTPException(status_code=400, detail=f"Unsupported action: {action}")
 
@@ -345,10 +345,10 @@ def node_action(name: str, action: str, _: str = Depends(require_admin)) -> JSON
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     payload: dict[str, object] = {"ok": True, "node": name, "action": action, "output": output}
-    if action == "reset-password":
+    if action in {"reset-password", "reset"}:
         credential = parse_reset_credential(output)
         if not credential.get("username") or not credential.get("password"):
-            raise HTTPException(status_code=502, detail="password reset succeeded but credential output was incomplete")
+            raise HTTPException(status_code=502, detail=f"{action} succeeded but credential output was incomplete")
         payload["credential"] = credential
     return JSONResponse(payload)
 
@@ -428,7 +428,7 @@ def cluster_node_action(cluster: str, name: str, action: str, _: str = Depends(r
         payload = _peer_json(
             f"/api/nodes/{quote(name, safe='')}/{quote(action, safe='')}",
             method="POST",
-            timeout=45,
+            timeout=100 if action == "reset" else 45,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
