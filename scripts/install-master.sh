@@ -12,6 +12,9 @@ PUBLISHED_PUBKEY="$ROOT/.cluster-manager.pub"
 LEGACY_CONFIG="$ROOT/cluster.local.env"
 LEGACY_KEY="$HOME/.ssh/cluster-manager_ed25519"
 LEGACY_KNOWN_HOSTS="$HOME/.ssh/cluster-manager_known_hosts"
+FIXED_MANAGEMENT_PASSWORD="clustermanager"
+CLUSTER2_PEER_URL="http://165.132.142.133:8080"
+MASTER_CONTROL_SOCKET="/run/cpu-cluster-manager/master-control.sock"
 cd "$ROOT"
 
 if [ "$(id -un)" != "$ADMIN_USER" ]; then
@@ -100,6 +103,7 @@ if [ ! -f "$CONFIG" ]; then
     *) DEFAULT_CLUSTER="cluster" ;;
   esac
   set_cfg CLUSTER "$DEFAULT_CLUSTER"
+  set_cfg ADMIN_PASSWORD "$FIXED_MANAGEMENT_PASSWORD"
   echo "[CREATED] $CONFIG"
   echo "[NEXT] edit only NODES= in $CONFIG using private management IPs, then run this installer again"
   exit 0
@@ -109,16 +113,24 @@ chmod 600 "$CONFIG"
 CLUSTER="$(get_cfg CLUSTER)"
 NODES="$(get_cfg NODES)"
 ADMIN_USERNAME="$(get_cfg ADMIN_USERNAME)"
-ADMIN_PASSWORD="$(get_cfg ADMIN_PASSWORD)"
 UI_HOST="$(get_cfg UI_HOST)"
 UI_PORT="$(get_cfg UI_PORT)"
 GRAFANA_PORT="$(get_cfg GRAFANA_PORT)"
+PEER_CLUSTER="$(get_cfg PEER_CLUSTER)"
+PEER_URL="$(get_cfg PEER_URL)"
 
 [ -n "$CLUSTER" ] && [ "$CLUSTER" != "AUTODETECT" ] || { echo "[ERROR] CLUSTER is not configured in $CONFIG" >&2; exit 2; }
 [ -n "$NODES" ] && [ "$NODES" != "EDIT_ME" ] || { echo "[ERROR] edit NODES= in $CONFIG first" >&2; exit 2; }
 ADMIN_USERNAME="${ADMIN_USERNAME:-clusteradmin}"
 UI_PORT="${UI_PORT:-8080}"
 GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+
+# Campus-only deployment policy: one fixed password, password-only login.
+if [ "$(get_cfg ADMIN_PASSWORD)" != "$FIXED_MANAGEMENT_PASSWORD" ]; then
+  set_cfg ADMIN_PASSWORD "$FIXED_MANAGEMENT_PASSWORD"
+  echo "[POLICY] management UI password set to the fixed campus value"
+fi
+ADMIN_PASSWORD="$FIXED_MANAGEMENT_PASSWORD"
 
 if [ -z "$UI_HOST" ] || [ "$UI_HOST" = "AUTODETECT" ]; then
   UI_HOST="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
@@ -130,11 +142,18 @@ if [ -z "$UI_HOST" ] || [ "$UI_HOST" = "AUTODETECT" ]; then
   echo "[AUTO] management UI host: $UI_HOST"
 fi
 
-GENERATED_ADMIN_PASSWORD=0
-if [ -z "$ADMIN_PASSWORD" ]; then
-  ADMIN_PASSWORD="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-  set_cfg ADMIN_PASSWORD "$ADMIN_PASSWORD"
-  GENERATED_ADMIN_PASSWORD=1
+# Cluster 1 is the single-pane federation primary. Cluster 2 remains an
+# independent control plane and services delegated requests from Cluster 1.
+if [ "$CLUSTER" = "cluster1" ]; then
+  PEER_CLUSTER="cluster2"
+  PEER_URL="$CLUSTER2_PEER_URL"
+  set_cfg PEER_CLUSTER "$PEER_CLUSTER"
+  set_cfg PEER_URL "$PEER_URL"
+else
+  PEER_CLUSTER=""
+  PEER_URL=""
+  set_cfg PEER_CLUSTER ""
+  set_cfg PEER_URL ""
 fi
 
 IFS=',' read -r -a NODE_ENTRIES <<< "$NODES"
@@ -160,12 +179,27 @@ echo "[INFO] shared source          : $ROOT"
 echo "[INFO] host-local state       : $STATE_DIR"
 echo "[INFO] host role              : master"
 echo "[INFO] management UI          : http://${UI_HOST}:${UI_PORT}"
+if [ -n "$PEER_URL" ]; then
+  echo "[INFO] federation peer        : ${PEER_CLUSTER} @ ${PEER_URL}"
+fi
 
 bash ./scripts/write-source-state.sh "$CONFIG"
 bash ./scripts/prepare-master-ssh.sh "$CONFIG" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts"
 install -m 0644 "$SSH_DIR/id_ed25519.pub" "$PUBLISHED_PUBKEY"
 echo "[OK] manager public key published on shared source: $PUBLISHED_PUBKEY"
 bash ./scripts/render-monitoring-targets.sh "$CONFIG" monitoring/targets
+
+# Install a minimal root-owned Unix-socket helper for master poweroff. The web
+# container never receives Docker socket access, host PID namespace, or broad
+# sudo privileges.
+echo "[INFO] installing restricted master poweroff socket"
+sudo install -m 0755 "$ROOT/master/cluster-master-control" /usr/local/sbin/cluster-master-control
+sudo install -m 0644 "$ROOT/master/systemd/cpu-cluster-master-control.socket" /etc/systemd/system/cpu-cluster-master-control.socket
+sudo install -m 0644 "$ROOT/master/systemd/cpu-cluster-master-control@.service" /etc/systemd/system/cpu-cluster-master-control@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now cpu-cluster-master-control.socket >/dev/null
+sudo test -S "$MASTER_CONTROL_SOCKET" || { echo "[ERROR] master control socket was not created: $MASTER_CONTROL_SOCKET" >&2; exit 2; }
+echo "[OK] restricted master control socket: $MASTER_CONTROL_SOCKET"
 
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh config >/dev/null
 CLUSTER_CONFIG="$CONFIG" bash ./scripts/compose.sh up -d --build
@@ -231,18 +265,15 @@ bash ./scripts/write-deploy-state.sh master "$CONFIG"
 rm -f "$LEGACY_KEY" "${LEGACY_KEY}.pub" "$LEGACY_KNOWN_HOSTS"
 rm -f "$HOME/.local/state/cpu-cluster-manager/deployed-version" 2>/dev/null || true
 
-if [ "$GENERATED_ADMIN_PASSWORD" -eq 1 ]; then
-  echo
-  echo "[CREDENTIAL] management_password=$ADMIN_PASSWORD"
-  echo "[IMPORTANT] this password is stored only in $CONFIG (mode 600)"
-fi
-
 echo
 echo "[OK] master installation complete"
 echo "[INFO] operator-managed local config: $CONFIG"
 echo "[INFO] Management UI: http://${UI_HOST}:${UI_PORT}"
-echo "[INFO] login: password only"
-echo "[INFO] Grafana: embedded under http://${UI_HOST}:${UI_PORT}/grafana/"
+echo "[INFO] login: password only (fixed campus policy)"
+echo "[INFO] Grafana: embedded under http://${UI_HOST}:${UI_PORT}/${CLUSTER}/grafana/"
 echo "[INFO] Grafana backend diagnostic: http://127.0.0.1:${GRAFANA_PORT}"
+if [ -n "$PEER_URL" ]; then
+  echo "[INFO] ${PEER_CLUSTER}: federated into this UI via ${PEER_URL}"
+fi
 echo "[INFO] manager public key: $SSH_DIR/id_ed25519.pub"
 echo "[NEXT] on each compute node: cd $ROOT && sudo bash node/install-node.sh"
