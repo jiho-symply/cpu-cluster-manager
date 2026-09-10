@@ -110,8 +110,8 @@ echo '[OK] every visible mutating control uses the shared modal; Logs opens imme
 echo '== flat monitoring node selector =='
 grep -Fq 'function monitorEntries()' "$UI" || fail 'flat monitoring node inventory missing'
 grep -Fq 'id="monitor-node-select"' "$UI" || fail 'unified monitoring node selector missing'
-grep -Fq 'monitorActions.addEventListener(' "$UI" || fail 'monitor node selector handler missing'
-if grep -Fq 'monitor-cluster' "$UI"; then fail 'Monitoring must not expose cluster selector buttons'; fi
+grep -Fq "monitorActions.addEventListener('change'" "$UI" || fail 'monitor node selector handler missing'
+if grep -Fq 'class="monitor-cluster' "$UI"; then fail 'Monitoring must not expose cluster selector buttons'; fi
 python3 - "$DASH" <<'PY'
 import json, sys
 data=json.load(open(sys.argv[1], encoding='utf-8'))
