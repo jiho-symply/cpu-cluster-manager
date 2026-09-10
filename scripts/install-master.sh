@@ -80,9 +80,11 @@ for entry in "${NODE_ENTRIES[@]}"; do
   }
 done
 
+MONITORED_HOSTS=$((NODE_COUNT + 1))
 echo "[INFO] cluster                : $CLUSTER"
 echo "[INFO] compute nodes          : $NODE_COUNT"
-echo "[INFO] archive block budget   : $((NODE_COUNT * 32))MB (32 MB/node)"
+echo "[INFO] monitored hosts        : $MONITORED_HOSTS (master + compute)"
+echo "[INFO] archive block budget   : $((MONITORED_HOSTS * 32))MB (32 MB/monitored host)"
 echo "[INFO] archive max retention  : 5y"
 echo "[INFO] archive bucket         : 5m min/avg/max"
 
