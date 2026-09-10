@@ -16,4 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Run repository checks
-        run: bash scripts/static-check.sh
+        run: |
+          bash scripts/static-check.sh
+          bash scripts/check-manager-container-security.sh
