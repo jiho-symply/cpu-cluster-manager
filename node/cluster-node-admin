@@ -40,6 +40,22 @@ summary() {
   printf 'DEPLOY_COMMIT=%s\n' "$commit"
 }
 
+poweroff_host() {
+  # Stop the renter workload first. docker stop is idempotent enough for an
+  # already-stopped container and gives the container up to 30 seconds to exit.
+  if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+    state="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME")"
+    if [ "$state" = "running" ]; then
+      docker stop -t 30 "$CONTAINER_NAME" >/dev/null
+    fi
+  fi
+
+  sync
+  printf 'RENT_NODE_STOPPED=1\n'
+  printf 'POWER_OFF_REQUESTED=1\n'
+  systemctl poweroff --no-block
+}
+
 need_root
 case "$ACTION" in
   summary) summary ;;
@@ -49,8 +65,9 @@ case "$ACTION" in
   recreate) "$RENTCTL" recreate ;;
   reset-password) "$RENTCTL" reset-password ;;
   logs) docker logs --tail 200 "$CONTAINER_NAME" 2>&1 ;;
+  poweroff) poweroff_host ;;
   *)
-    echo "usage: $0 {summary|start|stop|restart|recreate|reset-password|logs}" >&2
+    echo "usage: $0 {summary|start|stop|restart|recreate|reset-password|logs|poweroff}" >&2
     exit 2
     ;;
 esac
