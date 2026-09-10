@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if docker compose version >/dev/null 2>&1; then
-  exec docker compose "$@"
-fi
-if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
-  exec docker-compose "$@"
-fi
+CONFIG="${CLUSTER_CONFIG:-cluster.local.env}"
+[ -f "$CONFIG" ] || {
+  echo "cluster config not found: $CONFIG" >&2
+  echo "run: bash scripts/install-master.sh" >&2
+  exit 1
+}
 
-# Compatibility fallback for old hosts (notably CentOS 7). It changes no host
-# packages. label=disable is scoped only to this short-lived Compose client so
-# an SELinux-enforcing host can expose the Docker socket/project directory.
-exec docker run --rm -i \
-  --security-opt label=disable \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD:$PWD" \
-  -w "$PWD" \
-  docker/compose:1.29.2 "$@"
+docker compose version >/dev/null 2>&1 || {
+  echo "Docker Compose v2 plugin is required" >&2
+  exit 1
+}
+
+get_cfg() {
+  local key="$1"
+  awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$CONFIG"
+}
+
+NODES="$(get_cfg NODES)"
+[ -n "$NODES" ] || { echo "NODES is empty in $CONFIG" >&2; exit 1; }
+NODE_COUNT="$(printf '%s' "$NODES" | awk -F',' '{print NF}')"
+export ARCHIVE_RETENTION_SIZE="$((NODE_COUNT * 32))MB"
+
+exec docker compose --env-file "$CONFIG" "$@"
