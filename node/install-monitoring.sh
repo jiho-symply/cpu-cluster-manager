@@ -79,5 +79,5 @@ fi
 
 echo "[OK] native node_exporter ready: v${NODE_EXPORTER_VERSION}"
 echo "[OK] Git-tracked systemd units installed"
-echo "[OK] rent-node metrics: systemd timer every 30s"
+echo "[OK] rent-node metrics: systemd timer every 5s"
 echo "[OK] monitoring endpoint: :9100/metrics"
