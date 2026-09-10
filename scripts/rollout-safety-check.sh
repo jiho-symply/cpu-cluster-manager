@@ -51,6 +51,14 @@ if grep -Fq 'Waiting for shared source view to converge' scripts/rollout-all-com
   fail "rollout must not depend on mutable NFS source convergence"
 fi
 
+# Every compute must stage and validate the artifact before any compute installer
+# is invoked, preventing artifact-related failures from creating partial rollout.
+grep -Fq '[6/9] Staging/verifying immutable release on every compute' scripts/rollout-all-computes.sh || fail "all-node immutable release preflight missing"
+grep -Fq 'release preflight failed; no compute installation started' scripts/rollout-all-computes.sh || fail "release preflight failure must occur before compute mutation"
+STAGE_LINE="$(grep -n '\[6/9\] Staging/verifying immutable release on every compute' scripts/rollout-all-computes.sh | head -n1 | cut -d: -f1)"
+INSTALL_LINE="$(grep -n '\[7/9\] Installing/updating all computes sequentially from staged releases' scripts/rollout-all-computes.sh | head -n1 | cut -d: -f1)"
+[ -n "$STAGE_LINE" ] && [ -n "$INSTALL_LINE" ] && [ "$STAGE_LINE" -lt "$INSTALL_LINE" ] || fail "release staging must precede all compute installs"
+
 grep -Fq 'compute installer source is on network storage' node/install-node.sh || fail "compute installer must reject direct network-source execution"
 grep -Fq 'SOURCE_MANIFEST=' node/install-node.sh || fail "compute installer must require the release manifest"
 grep -Fq 'local immutable release contains file checksum mismatches' node/install-node.sh || fail "compute installer must verify every immutable release file"
@@ -82,4 +90,4 @@ grep -Fq 'bash "$ROOT/scripts/ensure-compute-docker.sh"' node/install-node.sh ||
 grep -Fq 'MIN_DOCKER_VERSION="20.10.10"' scripts/preflight.sh || fail "runtime baseline must include clone3-compatible Docker"
 grep -Fq 'MIN_DOCKER_API="1.41"' scripts/preflight.sh || fail "runtime API baseline must be 1.41"
 
-echo '[OK] rollout credential transport + canonical immutable release + Docker repair guards'
+echo '[OK] rollout credential transport + all-node canonical immutable release + Docker repair guards'
