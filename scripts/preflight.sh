@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROLE="${1:-all}"
 ADMIN_USER="${ADMIN_USER:-ysadmin}"
-MIN_DOCKER_API="1.40"
+MIN_DOCKER_VERSION="20.10.10"
+MIN_DOCKER_API="1.41"
 
 say() { printf '%-24s %s\n' "$1" "$2"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
@@ -45,6 +46,9 @@ DOCKER_VERSION="$(docker version --format '{{.Server.Version}}' 2>/dev/null || t
 DOCKER_API="$(docker version --format '{{.Server.APIVersion}}' 2>/dev/null || true)"
 say "Docker Engine" "${DOCKER_VERSION:-unknown}"
 say "Docker API" "${DOCKER_API:-unknown}"
+if [ -n "$DOCKER_VERSION" ] && ! version_ge "$DOCKER_VERSION" "$MIN_DOCKER_VERSION"; then
+  fail "Docker Engine $DOCKER_VERSION is older than required baseline $MIN_DOCKER_VERSION"
+fi
 if [ -n "$DOCKER_API" ] && ! version_ge "$DOCKER_API" "$MIN_DOCKER_API"; then
   fail "Docker API $DOCKER_API is older than required baseline $MIN_DOCKER_API"
 fi
@@ -88,7 +92,7 @@ fi
 if [ "$PLATFORM" = "ubuntu20" ]; then
   warn "Ubuntu 20.04 is outside Docker's current package-support list; the validated existing Docker Engine is reused."
 else
-  warn "CentOS 7 is EOL; the validated existing Docker Engine/kernel are reused and not replaced."
+  warn "CentOS 7 is EOL; validated Docker >=20.10.10 is reused, while legacy docker-ce computes are normalized to the pinned 20.10.17 release by the compute installer."
 fi
 
 echo "[OK] preflight completed"
