@@ -35,12 +35,13 @@ GRAFANA_PORT=3000
 다음은 secret/state이지만 사용자가 onefile에서 복사 관리할 대상이 아니다.
 
 ```text
-/home/ysadmin/.ssh/cluster-manager_ed25519       master-generated private key
-/home/ysadmin/.ssh/cluster-manager_known_hosts  SSH trust state
-/var/lib/cpu-cluster-manager/                   deployed commit / stored manager public key
-/src/rent/auth                                  renter auth DB
-/src/rent/ssh                                   rent-node SSH host keys
-Prometheus Docker volumes                       metrics history
+/home/ysadmin/.ssh/cluster-manager_ed25519                 master-generated private key
+/home/ysadmin/.ssh/cluster-manager_known_hosts            SSH trust state
+/home/ysadmin/.local/state/cpu-cluster-manager/           master deployed commit
+/var/lib/cpu-cluster-manager/                             compute deployed commit / stored manager public key
+/src/rent/auth                                            renter auth DB
+/src/rent/ssh                                             rent-node SSH host keys
+Prometheus Docker volumes                                 metrics history
 ```
 
 Private SSH key는 master 밖으로 복사하지 않는다. Compute node에는 public key만 전달한다.
@@ -100,7 +101,7 @@ cpu-cluster-manager/
 
 The actual two clusters have been checked with:
 
-- existing `ysadmin`, passwordless sudo and Docker group access
+- existing `ysadmin` and Docker group access
 - Docker Engine 20.10 / API 1.41 class
 - Docker Compose v2.6.0 on both masters
 - Ubuntu 20.04 master/compute and CentOS 7 master/compute
@@ -132,6 +133,8 @@ bash scripts/install-master.sh
 ```
 
 If `ADMIN_PASSWORD` is blank, the installer generates a random 32-hex password and writes it back to the same file.
+
+A successful install requires FastAPI/Grafana health checks and stable state/restart counts for all six master containers. A restart loop is treated as installation failure.
 
 ## Initial compute install
 
@@ -200,7 +203,15 @@ Whole-cluster verification checks restricted SSH control, compute metrics, deplo
 
 ## Deployed source revision
 
-Every successful install/update records:
+Every successful install/update records the exact Git commit.
+
+Master:
+
+```bash
+cat ~/.local/state/cpu-cluster-manager/deployed-version
+```
+
+Compute:
 
 ```bash
 cat /var/lib/cpu-cluster-manager/deployed-version
@@ -221,7 +232,9 @@ retention   30d
 
 Each 5-minute bucket stores `min / avg / max` for host CPU, host memory and max real-filesystem utilization. Compute nodes additionally store `rent-node` CPU, memory and running ratio.
 
-Compute node archive cardinality is 18 series/node. Maximum retention is 5 years. Persistent block budget is **32 MB per monitored host (master + compute)** and Archive WAL segment size is 8 MB. `retention.time` and `retention.size` both apply; whichever is reached first removes old blocks.
+Compute node archive cardinality is 18 series/node. Maximum retention is 5 years. Persistent block budget is **32 MB per monitored host (master + compute)**. Archive WAL segment size is **10 MB**, the minimum accepted by Prometheus 3.14. `retention.time` and `retention.size` both apply; whichever is reached first removes old blocks.
+
+The block limit does not hard-cap transient TSDB head/WAL/compaction overhead; the archive remains deliberately low-cardinality and actual master disk use should be observed during pilot operation.
 
 Grafana uses its standard Prometheus datasource minimum interval (`5m`) and `$__interval`; there is no custom resolution selector.
 
