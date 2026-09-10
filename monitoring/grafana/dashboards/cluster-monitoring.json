@@ -1,0 +1,151 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Host CPU",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "100 * cluster_node_cpu_utilization_ratio{node=\"$node\"}", "legendFormat": "", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Host Memory",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "100 * cluster_node_memory_utilization_ratio{node=\"$node\"}", "legendFormat": "", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Max Disk Used",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "100 * cluster_node_disk_utilization_ratio_max{node=\"$node\"}", "legendFormat": "", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "rent-node Memory",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "cluster_rent_memory_working_set_bytes{node=\"$node\"}", "legendFormat": "", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Host CPU",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "100 * cluster_node_cpu_utilization_ratio{node=\"$node\"}", "legendFormat": "CPU", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Host Memory",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "100 * cluster_node_memory_utilization_ratio{node=\"$node\"}", "legendFormat": "Memory", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Max Disk Used",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "100 * cluster_node_disk_utilization_ratio_max{node=\"$node\"}", "legendFormat": "Disk", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "rent-node CPU cores",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "cluster_rent_cpu_cores{node=\"$node\"}", "legendFormat": "CPU cores", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "rent-node Memory",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "cluster_rent_memory_working_set_bytes{node=\"$node\"}", "legendFormat": "Working set", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "rent-node Running",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "cluster_rent_running{node=\"$node\"}", "legendFormat": "Running", "range": true, "refId": "A", "maxDataPoints": 5000}]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Disk Alert · current",
+      "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 28},
+      "fieldConfig": {"defaults": {"unit": "none", "mappings": [{"type": "value", "options": {"0": {"text": "OK"}, "1": {"text": "FIRING"}}}]}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus-auto"}, "editorMode": "code", "expr": "max(ALERTS{alertname=~\"DiskSpaceWarning|DiskSpaceCritical\",alertstate=\"firing\",node=\"$node\"}) or vector(0)", "legendFormat": "", "range": false, "instant": true, "refId": "A"}]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": ["cpu-cluster-manager", "auto-resolution"],
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Node",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus-auto"},
+        "definition": "label_values(cluster_node_cpu_utilization_ratio, node)",
+        "query": {"query": "label_values(cluster_node_cpu_utilization_ratio, node)", "refId": "StandardVariableQuery"},
+        "refresh": 1,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+    "time_options": ["15m", "1h", "6h", "12h", "24h", "2d", "7d", "14d", "30d", "90d", "180d", "1y", "2y", "3y", "4y", "5y"]
+  },
+  "timezone": "browser",
+  "title": "CPU Cluster · Monitoring",
+  "uid": "cluster-monitoring",
+  "version": 1,
+  "weekStart": ""
+}
