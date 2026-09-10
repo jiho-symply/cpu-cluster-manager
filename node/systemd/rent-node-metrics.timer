@@ -1,10 +1,10 @@
 [Unit]
-Description=Collect rent-node Docker metrics every 30 seconds
+Description=Collect rent-node Docker metrics every 5 seconds
 
 [Timer]
-OnBootSec=20s
-OnUnitActiveSec=30s
-AccuracySec=5s
+OnBootSec=10s
+OnUnitActiveSec=5s
+AccuracySec=1s
 Unit=rent-node-metrics.service
 
 [Install]
