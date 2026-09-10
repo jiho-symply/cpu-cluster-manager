@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ADMIN_USER="ysadmin"
+STATE_DIR="/var/lib/cpu-cluster-manager"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "run with sudo: sudo bash $0 <cluster-manager-public-key-file>" >&2
@@ -28,12 +29,19 @@ case "$KEY_TYPE" in
   *) echo "unsupported SSH public key type: $KEY_TYPE" >&2; exit 4 ;;
 esac
 
-install -d -m 0755 /src/rent/image
-cp -a "$SCRIPT_DIR/rent-image/." /src/rent/image/
-chmod +x /src/rent/image/*.sh
+# /src/rent/image is a deployed copy only. Runtime data directories are untouched.
+install -d -m 0755 /src/rent "$STATE_DIR"
+TMP_IMAGE="$(mktemp -d /src/rent/.image.XXXXXX)"
+trap 'rm -rf "$TMP_IMAGE"' EXIT
+cp -a "$SCRIPT_DIR/rent-image/." "$TMP_IMAGE/"
+chmod +x "$TMP_IMAGE"/*.sh
+rm -rf /src/rent/image
+mv "$TMP_IMAGE" /src/rent/image
+trap - EXIT
 
 install -m 0755 "$SCRIPT_DIR/cluster-node-admin" /usr/local/sbin/cluster-node-admin
 install -m 0755 "$SCRIPT_DIR/cluster-node-ssh" /usr/local/bin/cluster-node-ssh
+install -m 0644 "$PUBKEY_FILE" "$STATE_DIR/manager.pub"
 
 SSH_DIR="$ADMIN_HOME/.ssh"
 AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
@@ -88,7 +96,10 @@ if [ "$FRESH_SETUP" -eq 1 ] && [ "$CONTAINER_STATE" != "running" ]; then echo "[
 METRICS="$(curl -fsS http://127.0.0.1:9100/metrics)" || exit 6
 if ! grep -q '^cluster_rent_container_' <<<"$METRICS"; then echo "[ERROR] rent-node monitoring metrics are not available" >&2; exit 6; fi
 
+bash "$SCRIPT_DIR/../scripts/write-deploy-state.sh" compute
+
 echo "[OK] compute-node installation complete"
 echo "[OK] SSH control user: $ADMIN_USER"
 echo "[OK] rent-node state: $CONTAINER_STATE"
 echo "[OK] monitoring: native node_exporter + rent-node metrics on TCP/9100"
+echo "[INFO] /src/rent/image is managed from Git and must not be edited locally"
