@@ -58,10 +58,8 @@ poweroff_host() {
 }
 
 reboot_host() {
-  # Do not issue `docker stop` here. The rent container uses
-  # --restart unless-stopped; a manual docker stop could suppress the expected
-  # automatic return after the Docker daemon comes back. Let systemd/Docker
-  # perform their normal graceful shutdown during reboot instead.
+  # Let systemd/Docker stop containers gracefully on reboot. rent-node's
+  # --restart always policy restores it when the Docker daemon next starts.
   sync
   printf 'REBOOT_REQUESTED=1\n'
   systemctl reboot --no-block

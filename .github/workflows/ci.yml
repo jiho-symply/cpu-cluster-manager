@@ -22,3 +22,15 @@ jobs:
           bash scripts/credential-ui-check.sh
           bash scripts/rollout-safety-check.sh
           bash scripts/release-bundle-check.sh
+      - name: Shutdown regression tests
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          page = Path("manager/app/templates/index.html").read_text()
+          script = page.split("<script>", 1)[1].split("</script>", 1)[0]
+          path = Path("/tmp/ccm-dashboard.js")
+          path.write_text(script)
+          subprocess.run(["node", "--check", str(path)], check=True)
+          PY

@@ -49,6 +49,7 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 _shutdown_lock = threading.Lock()
 _shutdown_confirmed: set[str] = set()
+_shutdown_in_progress = False
 
 
 def parse_nodes(spec: str) -> list[Node]:
@@ -133,13 +134,15 @@ def get_node(name: str) -> Node:
 def collect_summary(node: Node) -> dict[str, str | bool | int]:
     try:
         data = NodeSSH(node).summary()
-        return {"name": node.name, "host": node.host, "port": node.port, "reachable": True, **data}
+        return {"name": node.name, "host": node.host, "port": node.port, "reachable": True, "host_reachable": True, **data}
     except Exception as exc:
+        host_reachable = NodeSSH(node).is_online(timeout=1.0)
         return {
             "name": node.name,
             "host": node.host,
             "port": node.port,
             "reachable": False,
+            "host_reachable": host_reachable,
             "error": str(exc),
         }
 
@@ -215,10 +218,19 @@ def _mark_shutdown_confirmed(name: str, confirmed: bool) -> None:
 
 
 def _shutdown_one(node: Node) -> dict:
+    client = NodeSSH(node)
+    with _shutdown_lock:
+        already_confirmed = node.name in _shutdown_confirmed
+
+    # A repeated cluster shutdown must not lose an earlier acknowledged
+    # confirmation just because that node is now genuinely powered off.
+    if already_confirmed and not client.is_online():
+        return {"node": node.name, "ok": True, "offline": True, "detail": "previously confirmed offline"}
+
+    _mark_shutdown_confirmed(node.name, False)
     try:
-        result = NodeSSH(node).poweroff_and_wait(timeout=60)
-        if bool(result.get("offline")):
-            _mark_shutdown_confirmed(node.name, True)
+        result = client.poweroff_and_wait(timeout=60)
+        _mark_shutdown_confirmed(node.name, bool(result.get("offline")))
         return result
     except Exception as exc:
         _mark_shutdown_confirmed(node.name, False)
@@ -226,28 +238,56 @@ def _shutdown_one(node: Node) -> dict:
 
 
 def shutdown_local_computes() -> dict:
-    results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=min(8, max(1, len(NODES)))) as pool:
-        futures = {pool.submit(_shutdown_one, node): node for node in NODES}
-        for future in as_completed(futures):
-            results.append(future.result())
-    order = {node.name: i for i, node in enumerate(NODES)}
-    results.sort(key=lambda item: order.get(str(item["node"]), 9999))
-    all_offline = all(bool(item.get("offline")) for item in results)
-    return {"ok": all_offline, "cluster": CLUSTER, "all_offline": all_offline, "nodes": results}
+    global _shutdown_in_progress
+    with _shutdown_lock:
+        if _shutdown_in_progress:
+            raise HTTPException(status_code=409, detail="compute shutdown is already in progress")
+        _shutdown_in_progress = True
+
+    try:
+        results: list[dict] = []
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(NODES)))) as pool:
+            futures = {pool.submit(_shutdown_one, node): node for node in NODES}
+            for future in as_completed(futures):
+                results.append(future.result())
+        order = {node.name: i for i, node in enumerate(NODES)}
+        results.sort(key=lambda item: order.get(str(item["node"]), 9999))
+        all_offline = all(bool(item.get("offline")) for item in results)
+        return {"ok": all_offline, "cluster": CLUSTER, "all_offline": all_offline, "nodes": results}
+    finally:
+        with _shutdown_lock:
+            _shutdown_in_progress = False
 
 
 def master_shutdown_state() -> dict:
-    online: list[str] = []
-    for node in NODES:
-        if NodeSSH(node).is_online(timeout=1.0):
-            online.append(node.name)
+    # Probe nodes concurrently; a missing SSH response alone never grants
+    # shutdown permission. Only an earlier acknowledged poweroff plus stable
+    # unreachability can add a node to _shutdown_confirmed.
+    probes: dict[str, bool | None] = {}
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(NODES)))) as pool:
+        futures = {pool.submit(NodeSSH(node).is_online): node for node in NODES}
+        for future in as_completed(futures):
+            node = futures[future]
+            try:
+                probes[node.name] = future.result()
+            except Exception:
+                probes[node.name] = None
+
+    online = [node.name for node in NODES if probes.get(node.name) is True]
+    unknown = [node.name for node in NODES if probes.get(node.name) is None]
     with _shutdown_lock:
+        # Any positive reachability observation invalidates a past shutdown
+        # confirmation, even if the host was subsequently unreachable again.
+        _shutdown_confirmed.difference_update(online)
+        _shutdown_confirmed.difference_update(unknown)
         unconfirmed = [node.name for node in NODES if node.name not in _shutdown_confirmed]
+        in_progress = _shutdown_in_progress
     return {
-        "ready": not online and not unconfirmed,
+        "ready": not online and not unconfirmed and not in_progress,
         "online": online,
         "unconfirmed": unconfirmed,
+        "unknown": unknown,
+        "in_progress": in_progress,
     }
 
 

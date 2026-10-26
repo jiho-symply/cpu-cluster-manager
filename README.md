@@ -168,23 +168,28 @@ The installer:
 
 ## Update
 
-Update Git once on the master:
+GitHub updates and full compute deployment are performed **on each cluster master**, as `ysadmin`, without sudo:
 
 ```bash
 cd /home/ysadmin/cpu-cluster-manager
 bash scripts/update-master.sh
+bash scripts/rollout-all-computes.sh
+bash scripts/verify-cluster.sh
 ```
 
-This performs `git pull --ff-only`, restamps the shared source and updates the master stack.
+`update-master.sh` pulls the current branch (`dual-os-support`) and rebuilds the master UI. `rollout-all-computes.sh` stages a checksum-verified **immutable release bundle** on every configured compute node before installing it, preserving existing `rent-node` containers and renter data. Direct `node/update-node.sh` on an NFS-shared working tree is intentionally disabled.
 
-Then apply that already-shared source to each compute:
+### Rent restart and safe shutdown
+
+Newly created `rent-node` containers use `--restart always`. The compute installer also updates the restart policy of any existing container **in place** (`docker update --restart always`) without recreating it or deleting user data.
+
+The management UI's `Shutdown computes` operation explicitly stops each rent container before powering off the host. With the `always` policy, Docker restarts the container after the host next boots. Updating the restart policy does **not** immediately start a currently stopped container; start it separately if needed:
 
 ```bash
-cd /home/ysadmin/cpu-cluster-manager
-bash node/update-node.sh
+sudo docker start rent-node
 ```
 
-Compute update does not run Git; it verifies the master stamp/hash and deploys to host-local paths. Re-running it is idempotent with respect to the stored manager public key.
+`Shutdown master` is unlocked only after the UI successfully requests compute poweroff and verifies repeated unreachability of both SSH and host monitoring ports. A node that is already unreachable without an acknowledged shutdown remains **unconfirmed**; a network failure is not proof of physical poweroff. Master readiness is intentionally reset when the management service itself restarts.
 
 ## Verification
 

@@ -60,19 +60,28 @@ class NodeSSH:
         return result
 
     def is_online(self, timeout: float = 1.0) -> bool:
-        try:
-            with socket.create_connection((self.node.host, self.node.port), timeout=timeout):
-                return True
-        except OSError:
-            return False
+        # A positive TCP connection to either host-native service is sufficient
+        # to prove the host is not yet powered off. A failed connection alone is
+        # not evidence of a completed shutdown.
+        for port in (self.node.port, 9100):
+            try:
+                with socket.create_connection((self.node.host, port), timeout=timeout):
+                    return True
+            except OSError:
+                continue
+        return False
 
-    def wait_offline(self, timeout: int = 60, interval: float = 2.0) -> bool:
+    def wait_offline(self, timeout: int = 60, interval: float = 2.0, consecutive_failures: int = 3) -> bool:
         deadline = time.monotonic() + timeout
+        misses = 0
         while time.monotonic() < deadline:
-            if not self.is_online():
+            misses = 0 if self.is_online() else misses + 1
+            if misses >= consecutive_failures:
                 return True
-            time.sleep(interval)
-        return not self.is_online()
+            pause = min(interval, max(0.0, deadline - time.monotonic()))
+            if pause > 0:
+                time.sleep(pause)
+        return False
 
     def summary(self) -> dict[str, str]:
         return self._parse_kv(self._run("summary"))
@@ -91,15 +100,17 @@ class NodeSSH:
         return self._run(action, timeout=timeout)
 
     def poweroff_and_wait(self, timeout: int = 60) -> dict[str, str | bool]:
-        if not self.is_online():
-            return {"node": self.node.name, "ok": True, "offline": True, "detail": "already offline"}
+        # An already unreachable host is NOT implicitly confirmed powered off.
+        # Require an acknowledged poweroff request, then repeated observations.
         output = self.action("poweroff")
+        if "POWER_OFF_REQUESTED=1" not in output:
+            raise RuntimeError(f"{self.node.name}: poweroff request was not acknowledged")
         offline = self.wait_offline(timeout=timeout)
         return {
             "node": self.node.name,
             "ok": offline,
             "offline": offline,
-            "detail": output if offline else "poweroff requested but SSH port remained reachable",
+            "detail": output if offline else "poweroff acknowledged but host SSH/metrics ports did not remain unreachable",
         }
 
     def logs(self) -> str:

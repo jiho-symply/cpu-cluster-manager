@@ -163,6 +163,14 @@ else
   echo "[SKIP] existing rent-node and persistent data preserved"
 fi
 
+# Migrate existing rent-node containers in place.  Recreating a container would
+# unnecessarily disrupt the renter and is not required for a restart-policy change.
+RESTART_POLICY="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$CONTAINER_NAME")"
+if [ "$RESTART_POLICY" != "always" ]; then
+  docker update --restart always "$CONTAINER_NAME" >/dev/null
+  echo "[OK] migrated $CONTAINER_NAME restart policy: $RESTART_POLICY -> always"
+fi
+
 bash "$SCRIPT_DIR/install-monitoring.sh"
 
 docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 || { echo "[ERROR] rent-node does not exist after installation" >&2; exit 5; }

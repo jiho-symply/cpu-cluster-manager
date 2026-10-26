@@ -130,21 +130,18 @@ Cluster 1 pilot validation confirmed an existing `rent-node` kept the same conta
 
 ## Updates
 
-Run Git only on the master:
+On each cluster master (`ysadmin`, no sudo), update the master UI and then install the same immutable Git release on the computes:
 
 ```bash
 cd /home/ysadmin/cpu-cluster-manager
 bash scripts/update-master.sh
+bash scripts/rollout-all-computes.sh
+bash scripts/verify-cluster.sh
 ```
 
-Then on each compute:
+Direct compute updating from the shared NFS checkout is disabled. The rollout stages and verifies a release bundle on each compute before installing, and preserves the existing rent container and persistent data. The installer also migrates existing `rent-node` restart policies from `unless-stopped` to `always` without container recreation. A manually stopped container is not started by this migration.
 
-```bash
-cd /home/ysadmin/cpu-cluster-manager
-bash node/update-node.sh
-```
-
-Compute update does not invoke Git. It validates the shared source stamp/hash and redeploys local management files. The stored `/var/lib/cpu-cluster-manager/manager.pub` may be passed back to the installer safely; this path is explicitly idempotent.
+The shutdown workflow explicitly stops the rental container before host poweroff. On subsequent host/Docker startup, `always` causes the rental container to start again. Master shutdown remains locked until each compute has an acknowledged poweroff request followed by stable unreachability checks. Network/SSH failures without that acknowledgement are not treated as confirmed poweroff.
 
 ## Verification
 

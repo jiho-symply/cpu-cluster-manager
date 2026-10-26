@@ -32,6 +32,13 @@ check_active() {
 
 if docker inspect rent-node >/dev/null 2>&1; then
   echo "[OK] rent-node: $(docker inspect -f '{{.State.Status}}' rent-node)"
+  RESTART_POLICY="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' rent-node)"
+  if [ "$RESTART_POLICY" = "always" ]; then
+    echo "[OK] rent-node restart policy: always"
+  else
+    echo "[FAIL] rent-node restart policy: $RESTART_POLICY (expected always)" >&2
+    FAIL=1
+  fi
 else
   echo "[FAIL] rent-node missing" >&2
   FAIL=1

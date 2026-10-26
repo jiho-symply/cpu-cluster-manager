@@ -30,7 +30,7 @@ docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \
   --name "$CONTAINER_NAME" \
   --hostname "$CONTAINER_NAME" \
-  --restart unless-stopped \
+  --restart always \
   -p "${HOST_SSH_PORT}:22" \
   -p "${HOST_PORT_1}:2201" \
   -p "${HOST_PORT_2}:2202" \
