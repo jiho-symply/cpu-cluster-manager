@@ -99,7 +99,7 @@ cleanup_bootstrap() {
     echo "[CLEANUP] removed temporary bootstrap SSH key"
   fi
   SUDO_PASS=""
-  unset SUDO_PASS || true
+  unset SUDO_PASS SUDO_PASSWORD_BY_NODE || true
   rm -rf "$BOOT_DIR"
 }
 trap cleanup_bootstrap EXIT INT TERM
@@ -171,17 +171,36 @@ if [ "$NEED_PASSWORD" -eq 1 ]; then
   [ -n "$SUDO_PASS" ] || fail "empty sudo password"
 fi
 
+# Preserve per-node credentials only in shell memory. A single shared sudo
+# password is the fast path; one interactive retry permits nodes with distinct
+# passwords without weakening the all-node preflight requirement.
+declare -A SUDO_PASSWORD_BY_NODE=()
+check_sudo_password() {
+  local host="$1" candidate="$2"
+  printf '%s\n' "$candidate" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "sudo -S -p '' true" >/dev/null 2>&1
+}
 for entry in "${ENTRIES[@]}"; do
   name="${entry%%@*}"
   host="${entry#*@}"
   if ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" 'sudo -n true' >/dev/null 2>&1; then
-    :
-  else
-    if ! printf '%s\n' "$SUDO_PASS" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" "sudo -S -p '' true" >/dev/null 2>&1; then
-      fail "sudo authentication preflight failed on $name ($host); no compute was modified"
-    fi
+    continue
   fi
+
+  candidate="$SUDO_PASS"
+  if ! check_sudo_password "$host" "$candidate"; then
+    echo "[WARN] sudo authorization rejected on $name ($host). The nodes may have different passwords or sudo policies." >&2
+    printf 'ysadmin sudo password for %s (one retry; input hidden): ' "$name" >&2
+    IFS= read -r -s candidate || fail "unable to read sudo password for $name"
+    echo >&2
+    [ -n "$candidate" ] || fail "empty sudo password for $name; no compute was modified"
+    if ! check_sudo_password "$host" "$candidate"; then
+      fail "sudo authorization failed on $name ($host) after retry; no compute was modified. On that node, check: sudo -k; sudo -v; sudo -l"
+    fi
+    SUDO_PASS="$candidate"
+  fi
+  SUDO_PASSWORD_BY_NODE["$name"]="$candidate"
 done
+unset candidate
 echo "[OK] sudo preflight passed on all ${#ENTRIES[@]} computes"
 
 stage_remote_release() {
@@ -235,7 +254,7 @@ for entry in "${ENTRIES[@]}"; do
       >>"$log" 2>&1
     rc=$?
   else
-    printf '%s\n' "$SUDO_PASS" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
+    printf '%s\n' "${SUDO_PASSWORD_BY_NODE[$name]}" | ssh -T "${ssh_common[@]}" "$ADMIN_USER@$host" \
       "sudo -S -p '' bash '$REMOTE_ROOT/node/install-node.sh' '$REMOTE_ROOT/.cluster-manager.pub' && bash '$REMOTE_ROOT/node/verify-node.sh'" \
       >>"$log" 2>&1
     rc=$?

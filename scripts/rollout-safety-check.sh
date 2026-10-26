@@ -21,7 +21,10 @@ if grep -Eq 'ssh[[:space:]]+-tt' scripts/rollout-all-computes.sh; then
 fi
 grep -Fq 'ssh -T' scripts/rollout-all-computes.sh || fail "bulk rollout must use a non-PTY SSH channel"
 grep -Fq 'used in memory only' scripts/rollout-all-computes.sh || fail "sudo credential handling policy marker missing"
-grep -Fq 'unset SUDO_PASS' scripts/rollout-all-computes.sh || fail "sudo credential must be cleared during cleanup"
+grep -Fq 'unset SUDO_PASS SUDO_PASSWORD_BY_NODE' scripts/rollout-all-computes.sh || fail "sudo credentials must be cleared during cleanup"
+grep -Fq 'declare -A SUDO_PASSWORD_BY_NODE=()' scripts/rollout-all-computes.sh || fail "per-node sudo authentication support is missing"
+grep -Fq 'SUDO_PASSWORD_BY_NODE["$name"]="$candidate"' scripts/rollout-all-computes.sh || fail "per-node password mapping missing"
+grep -Fq 'one retry; input hidden' scripts/rollout-all-computes.sh || fail "failed shared sudo authentication needs one safe retry"
 
 # Source identity must be canonical across heterogeneous host locales.
 grep -Fq 'export LC_ALL=C' scripts/source-manifest.sh || fail "source manifest ordering must force the C locale"

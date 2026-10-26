@@ -146,11 +146,11 @@ Existing masters originally cloned `dual-os-support` with `--single-branch`. Swi
 ```bash
 cd /home/ysadmin/cpu-cluster-manager
 git fetch origin refs/heads/main:refs/remotes/origin/main
-git checkout main
+git checkout -b main --track origin/main
 bash scripts/update-master.sh
 ```
 
-Do not force/reset an existing local branch if checkout or fast-forward fails. After this migration, repeat the three normal update commands above for future releases.
+Use `git checkout main` only if the local `main` branch already exists. A plain `git checkout main` can fail on older single-branch clones even after fetching. Do not force/reset an existing local branch if checkout or fast-forward fails. After this migration, repeat the three normal update commands above for future releases.
 
 Direct compute updating from the shared NFS checkout is disabled. The rollout stages and verifies a release bundle on each compute before installing, and preserves the existing rent container and persistent data. The installer also migrates existing `rent-node` restart policies from `unless-stopped` to `always` without container recreation. A manually stopped container is not started by this migration.
 
