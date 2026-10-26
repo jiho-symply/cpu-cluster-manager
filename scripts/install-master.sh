@@ -22,6 +22,13 @@ if [ "$(id -un)" != "$ADMIN_USER" ]; then
   exit 1
 fi
 
+DEPLOY_BRANCH="$(git symbolic-ref -q --short HEAD 2>/dev/null || true)"
+if [ "$DEPLOY_BRANCH" != "main" ]; then
+  echo "[ERROR] only main branch may be deployed (current=${DEPLOY_BRANCH:-detached})" >&2
+  echo "        switch to main or run scripts/update-master.sh to migrate a legacy checkout" >&2
+  exit 2
+fi
+
 bash ./scripts/preflight.sh master
 
 ADMIN_GROUP="$(id -gn "$ADMIN_USER")"

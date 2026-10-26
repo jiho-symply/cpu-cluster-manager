@@ -10,6 +10,9 @@ cd "$ROOT"
 fail() { echo "[ERROR] $*" >&2; exit 1; }
 get_cfg() { awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$CONFIG"; }
 
+DEPLOY_BRANCH="$(git symbolic-ref -q --short HEAD 2>/dev/null || true)"
+[ "$DEPLOY_BRANCH" = "main" ] || fail "only main branch may be deployed (current=${DEPLOY_BRANCH:-detached})"
+
 [ "$(id -un)" = "$ADMIN_USER" ] || fail "run as $ADMIN_USER without sudo"
 [ -f "$CONFIG" ] || fail "cluster config not found: $CONFIG"
 if ! git diff --quiet || ! git diff --cached --quiet; then

@@ -120,10 +120,10 @@ Installer does not replace Docker Engine and does not rewrite site firewall/ipta
 
 ## Initial master install
 
-Current implementation remains on `dual-os-support` until both cluster pilots are complete.
+The canonical deployment branch is **`main`**. The former `dual-os-support` branch is retained only for historical reference and is not a deployment target.
 
 ```bash
-git clone --branch dual-os-support --single-branch \
+git clone --branch main --single-branch \
   https://github.com/jiho-symply/cpu-cluster-manager.git
 cd cpu-cluster-manager
 bash scripts/install-master.sh
@@ -177,7 +177,22 @@ bash scripts/rollout-all-computes.sh
 bash scripts/verify-cluster.sh
 ```
 
-`update-master.sh` pulls the current branch (`dual-os-support`) and rebuilds the master UI. `rollout-all-computes.sh` stages a checksum-verified **immutable release bundle** on every configured compute node before installing it, preserving existing `rent-node` containers and renter data. Direct `node/update-node.sh` on an NFS-shared working tree is intentionally disabled.
+`update-master.sh` fetches and fast-forwards **`origin/main`**, ensures the local checkout is on `main`, and rebuilds the master UI. `rollout-all-computes.sh` stages a checksum-verified **immutable release bundle** on every configured compute node before installing it, preserving existing `rent-node` containers and renter data. Direct `node/update-node.sh` on an NFS-shared working tree is intentionally disabled.
+
+### One-time migration of previously installed masters
+
+Both master nodes previously cloned `dual-os-support` with `--single-branch`. On **each master**, run this once as `ysadmin` before using the regular update workflow:
+
+```bash
+cd /home/ysadmin/cpu-cluster-manager
+git fetch origin refs/heads/main:refs/remotes/origin/main
+git checkout main
+bash scripts/update-master.sh
+bash scripts/rollout-all-computes.sh
+bash scripts/verify-cluster.sh
+```
+
+`git checkout main` automatically creates a tracking branch from `origin/main` when no local `main` exists (including Git 1.8 on CentOS 7). If it cannot check out, **do not force/reset**; inspect `git status` and resolve the conflict first. Subsequent deployments use only the three update/rollout/verify commands above. The updater also supports safe legacy-branch migration when its **new** version has already been installed.
 
 ### Rent restart and safe shutdown
 

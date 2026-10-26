@@ -31,6 +31,15 @@ grep -Fq 'this host is a cluster master; node/update-node.sh is compute-only' no
 grep -Fq 'this host is a cluster master; node/verify-node.sh is compute-only' node/verify-node.sh || fail 'compute verifier must refuse master hosts'
 echo '[OK] master/compute role guards present'
 
+echo '== canonical main deployment =='
+grep -Fq 'branches: [main]' .github/workflows/ci.yml || fail 'CI must target main'
+grep -Fq 'git clone --branch main --single-branch' README.md || fail 'master clone instructions must use main'
+grep -Fq 'git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main' scripts/update-master.sh || fail 'master updater must fetch main explicitly'
+grep -Fq 'git merge --ff-only refs/remotes/origin/main' scripts/update-master.sh || fail 'master update must fast-forward only'
+grep -Fq 'only main branch may be deployed' scripts/install-master.sh || fail 'master installer must reject other branches'
+grep -Fq 'only main branch may be deployed' scripts/rollout-all-computes.sh || fail 'compute rollout must reject other branches'
+echo '[OK] main-only deployment and safe legacy checkout migration'
+
 echo '== CentOS 7 compatibility =='
 if grep -R -n --exclude=static-check.sh 'git -C ' scripts node master >/tmp/ccm-git-c-usage.$$ 2>/dev/null; then
   cat /tmp/ccm-git-c-usage.$$ >&2

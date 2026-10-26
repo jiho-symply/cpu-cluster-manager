@@ -81,7 +81,7 @@ Master-only SSH state is also host-local:
 ## Master install
 
 ```bash
-git clone --branch dual-os-support --single-branch \
+git clone --branch main --single-branch \
   https://github.com/jiho-symply/cpu-cluster-manager.git
 cd cpu-cluster-manager
 bash scripts/install-master.sh
@@ -130,6 +130,8 @@ Cluster 1 pilot validation confirmed an existing `rent-node` kept the same conta
 
 ## Updates
 
+`main` is the only supported deployment branch. CI push checks also run on `main`.
+
 On each cluster master (`ysadmin`, no sudo), update the master UI and then install the same immutable Git release on the computes:
 
 ```bash
@@ -138,6 +140,17 @@ bash scripts/update-master.sh
 bash scripts/rollout-all-computes.sh
 bash scripts/verify-cluster.sh
 ```
+
+Existing masters originally cloned `dual-os-support` with `--single-branch`. Switch each master to `main` once, before normal updates:
+
+```bash
+cd /home/ysadmin/cpu-cluster-manager
+git fetch origin refs/heads/main:refs/remotes/origin/main
+git checkout main
+bash scripts/update-master.sh
+```
+
+Do not force/reset an existing local branch if checkout or fast-forward fails. After this migration, repeat the three normal update commands above for future releases.
 
 Direct compute updating from the shared NFS checkout is disabled. The rollout stages and verifies a release bundle on each compute before installing, and preserves the existing rent container and persistent data. The installer also migrates existing `rent-node` restart policies from `unless-stopped` to `always` without container recreation. A manually stopped container is not started by this migration.
 
