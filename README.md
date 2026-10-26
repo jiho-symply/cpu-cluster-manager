@@ -185,14 +185,33 @@ Both master nodes previously cloned `dual-os-support` with `--single-branch`. On
 
 ```bash
 cd /home/ysadmin/cpu-cluster-manager
-git fetch origin refs/heads/main:refs/remotes/origin/main
+git config --add remote.origin.fetch '+refs/heads/main:refs/remotes/origin/main'
+git fetch origin
 git checkout -b main --track origin/main
 bash scripts/update-master.sh
 bash scripts/rollout-all-computes.sh
 bash scripts/verify-cluster.sh
 ```
 
-`git checkout -b main --track origin/main` explicitly creates the local tracking branch; plain `git checkout main` can fail on an older `--single-branch` clone even after fetching `origin/main`. If a local `main` already exists, use `git checkout main` instead. **Do not force/reset** if Git reports a conflict. Subsequent deployments use only the three update/rollout/verify commands above. The updater also supports safe legacy-branch migration when its **new** version has already been installed.
+`git config --add remote.origin.fetch ...` registers `main` as a real remote-tracking branch. Explicitly fetching `origin/main` without that refspec can produce `fatal: Cannot setup tracking information; starting point 'origin/main' is not a branch` on a legacy single-branch clone. If a local `main` already exists, use `git checkout main` instead. **Do not force/reset** if Git reports a conflict. Subsequent deployments use only the three update/rollout/verify commands above. The updater also supports safe legacy-branch migration when its **new** version has already been installed.
+
+#### Recovery after a failed `git checkout -b main --track origin/main`
+
+Git can change the staging index/worktree toward `origin/main` before reporting the missing tracking configuration. This leaves tracked files as `M`, causing `update-master.sh` to refuse the dirty tree. Verify that **both the index and worktree match the previously fetched `origin/main`**:
+
+```bash
+git diff --quiet origin/main && git diff --cached --quiet origin/main && echo "main snapshot matches"
+```
+
+**Only if it prints `main snapshot matches`**, finish the checkout without resetting or stashing anything:
+
+```bash
+git config --add remote.origin.fetch '+refs/heads/main:refs/remotes/origin/main'
+git checkout -b main --track origin/main
+bash scripts/update-master.sh
+```
+
+If the match check fails, keep all existing changes and inspect `git diff` and `git diff --cached` before proceeding. Do not use `git reset --hard`.
 
 ### Sudo authentication during compute rollout
 

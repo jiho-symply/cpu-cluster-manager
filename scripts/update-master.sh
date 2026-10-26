@@ -19,8 +19,13 @@ case "$CURRENT_BRANCH" in
   *) fail "unsupported checkout branch: ${CURRENT_BRANCH:-detached}; expected main" ;;
 esac
 
-# Fetch main explicitly: older master clones track only dual-os-support
-# because their original command used --single-branch.
+# Older master clones tracked only dual-os-support (--single-branch).
+# Register main as an actual tracked ref, not merely a manually fetched
+# ref: otherwise --track and --set-upstream-to can reject origin/main.
+MAIN_REFSPEC='+refs/heads/main:refs/remotes/origin/main'
+if ! git config --get-all remote.origin.fetch | grep -Fxq "$MAIN_REFSPEC"; then
+  git config --add remote.origin.fetch "$MAIN_REFSPEC"
+fi
 git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
 
 # Preserve locally committed work: only migrate branches when all existing
